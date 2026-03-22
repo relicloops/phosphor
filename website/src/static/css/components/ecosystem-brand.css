@@ -1,0 +1,47 @@
+/* EcosystemBrand -- reusable branding eyebrow */
+.ecosystem-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  font-family: var(--font-electrolize);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  line-height: 1;
+}
+
+.ecosystem-brand__org {
+  color: var(--text-primary);
+}
+
+.ecosystem-brand__sep {
+  color: var(--phosphor-green);
+  opacity: 0.6;
+}
+
+.ecosystem-brand__label {
+  color: var(--text-dim);
+}
+
+/* Size variants */
+.ecosystem-brand--sm {
+  font-size: 0.7rem;
+}
+
+.ecosystem-brand--md {
+  font-size: 0.85rem;
+}
+
+.ecosystem-brand--lg {
+  font-size: 1rem;
+}
+
+/* Light theme */
+[data-theme="light"] .ecosystem-brand__sep {
+  color: var(--uv-violet);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .ecosystem-brand__sep {
+    color: var(--uv-violet);
+  }
+}

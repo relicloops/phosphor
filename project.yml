@@ -1,0 +1,55 @@
+---
+:project:
+  :build_root: build/ceedling
+  :use_exceptions: FALSE
+  :use_mocks: TRUE
+  :test_file_prefix: test_
+
+:paths:
+  :source:
+    - src/**
+    - subprojects/toml-c
+  :source_exclude:
+    - src/commands/glow_cmd.c
+    - src/template/embedded_registry.c
+  :include:
+    - include
+    - subprojects/toml-c
+    - build/subprojects/pcre2/__CMake_build
+  :test:
+    - tests/unit/**
+  :support:
+    - tests/support
+
+:flags:
+  :test:
+    :compile:
+      :*:
+        - -std=gnu17
+        - -pedantic
+        - -Wall
+        - -Wextra
+        - -D_POSIX_C_SOURCE=200809L
+        - -DPHOSPHOR_VERSION=\"0.0.1-022\"
+        - -DPHOSPHOR_HAS_PCRE2=1
+    :link:
+      :*:
+        - -Lbuild/subprojects/pcre2
+        - -lpcre2_8_static
+
+:plugins:
+  :enabled:
+    - gcov
+
+:gcov:
+  :utilities:
+    - gcovr
+  :reports:
+    - HtmlDetailed
+  :gcovr:
+    :report_root: "../../"
+    :html_medium_threshold: 75
+    :html_high_threshold: 90
+    :exclude:
+      - subprojects
+      - tests

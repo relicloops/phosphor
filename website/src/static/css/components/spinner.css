@@ -1,0 +1,73 @@
+/* Spinner Component */
+.spinner-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  min-height: 320px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.spinner {
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+
+.spinner-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  animation: spin 1.5s ease-in-out infinite;
+}
+
+.spinner-ring:nth-child(1) {
+  border-top-color: #39ff14;
+  animation-delay: 0s;
+}
+
+.spinner-ring:nth-child(2) {
+  border-right-color: #7b2ff7;
+  animation-delay: 0.15s;
+  inset: 8px;
+}
+
+.spinner-ring:nth-child(3) {
+  border-bottom-color: #00ffff;
+  animation-delay: 0.3s;
+  inset: 16px;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner-message {
+  margin-top: 1.5rem;
+  font-family: var(--font-share-tech);
+  color: #6b7c93;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+
+/* Light theme */
+[data-theme="light"] .spinner-container {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.05);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .spinner-container {
+    background: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.05);
+  }
+}

@@ -1,0 +1,31 @@
+/* Neon Color Palette */
+:root {
+  /* Primary */
+  --phosphor-green: #39ff14;
+  --uv-violet: #7b2ff7;
+
+  /* Backgrounds */
+  --void-black: #0a0a0f;
+  --void-deep: #050508;
+  --void-light: #12121a;
+
+  /* Text */
+  --text-primary: #e0e0f0;
+  --text-dim: rgba(224, 224, 240, 0.5);
+
+  /* Neon accents (semantic aliases) */
+  --neon-green: #39ff14;
+  --neon-green-dark: #1a8a0a;
+  --neon-violet: #7b2ff7;
+  --neon-violet-dark: #5a1db5;
+  --neon-cyan: #00ffff;
+  --neon-pink: #ff00ff;
+  --neon-purple: #a855f7;
+  --neon-red: #ff3366;
+  --neon-orange: #ff6600;
+
+  /* Grid / glow */
+  --grid-line: rgba(57, 255, 20, 0.08);
+  --phosphor-glow: rgba(57, 255, 20, 0.4);
+  --violet-glow: rgba(123, 47, 247, 0.3);
+}

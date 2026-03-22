@@ -1,0 +1,9 @@
+/* Syntax Highlight -- generic token colors for dark backgrounds */
+.hl--string      { color: #a6e3a1; }
+.hl--number      { color: #b4a0e5; }
+.hl--boolean     { color: #fab387; }
+.hl--keyword     { color: #74c7ec; }
+.hl--operator    { color: #cdd6f4; }
+.hl--bracket     { color: #f9e2af; }
+.hl--punctuation { color: #7f849c; }
+.hl--comment     { color: rgba(224, 224, 240, 0.45); }

@@ -1,0 +1,160 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+phosphor -- Copyright 2026 Simone Del Popolo
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This project incorporates or depends on the following third-party software.
+Each is listed with its license type and copyright notice.
+
+================================================================================
+VENDORED DEPENDENCIES (compiled into the binary)
+================================================================================
+
+toml-c
+  https://github.com/cktan/tomlc99
+  License: MIT
+  Location: subprojects/toml-c/
+
+  MIT License
+
+  Copyright (c) CK Tan
+  https://github.com/cktan/tomlc99
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+libgit2
+  https://libgit2.org/
+  https://github.com/libgit2/libgit2
+  License: GPL-2.0 with Linking Exception
+  Location: subprojects/libgit2/ (vendored via meson wrap, optional)
+
+  libgit2 is Copyright (C) the libgit2 contributors, unless otherwise stated.
+  See the AUTHORS file for details.
+
+  libgit2 is available under the terms of the GNU General Public License
+  version 2 with the following linking exception:
+
+  In addition to the permissions in the GNU General Public License, the authors
+  give you unlimited permission to link the compiled version of this library
+  into combinations with other programs, and to distribute those combinations
+  without any restriction coming from the use of this file. (The General Public
+  License restrictions do apply in other respects; for example, they cover
+  modification of the file, and distribution when not linked into a combined
+  executable.)
+
+libarchive
+  https://www.libarchive.org/
+  https://github.com/libarchive/libarchive
+  License: BSD-2-Clause
+  Location: subprojects/libarchive/ (vendored via meson wrap, optional)
+
+  Copyright (c) 2003-2018 Tim Kientzle
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer in this position
+     and unchanged.
+
+  2. Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+
+  THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) "AS IS" AND ANY EXPRESS OR
+  IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+  IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
+  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+  NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+SHA256 implementation
+  Based on public-domain code by Brad Conte (2013)
+  License: Public Domain
+  Location: src/crypto/sha256.c (embedded)
+
+  The core SHA256 transform is derived from Brad Conte's crypto-algorithms
+  project (https://github.com/B-Con/crypto-algorithms), which was released
+  into the public domain. File hashing and hex conversion are phosphor
+  additions under the Apache-2.0 project license.
+
+================================================================================
+BUILD-TIME DEPENDENCIES (not distributed with the binary)
+================================================================================
+
+Meson
+  https://mesonbuild.com/
+  https://github.com/mesonbuild/meson
+  License: Apache-2.0
+  Copyright: The Meson development team
+
+Ninja
+  https://ninja-build.org/
+  https://github.com/ninja-build/ninja
+  License: Apache-2.0
+  Copyright (c) 2011 Google Inc.
+
+CMake
+  https://cmake.org/
+  https://github.com/Kitware/CMake
+  License: BSD-3-Clause
+  Copyright 2000-2024 Kitware, Inc. and Contributors
+
+================================================================================
+TEST DEPENDENCIES (not distributed with the binary)
+================================================================================
+
+Ceedling
+  https://www.throwtheswitch.org/ceedling
+  https://github.com/ThrowTheSwitch/Ceedling
+  License: MIT
+  Copyright (c) 2010-2025 Mike Karlesky, Mark VanderVoord, & Greg Williams
+
+Unity
+  https://www.throwtheswitch.org/unity
+  https://github.com/ThrowTheSwitch/Unity
+  License: MIT
+  Copyright (c) 2007-2025 Mike Karlesky, Mark VanderVoord, & Greg Williams
+
+CMock
+  https://www.throwtheswitch.org/cmock
+  https://github.com/ThrowTheSwitch/CMock
+  License: MIT
+  Copyright (c) 2007-2025 Mike Karlesky, Mark VanderVoord, & Greg Williams
+
+CException
+  https://www.throwtheswitch.org/cexception
+  https://github.com/ThrowTheSwitch/CException
+  License: MIT
+  Copyright (c) 2007-2024 Mark VanderVoord
+
+================================================================================
+DOCUMENTATION DEPENDENCIES (not distributed with the binary)
+================================================================================
+
+Sphinx
+  https://www.sphinx-doc.org/
+  https://github.com/sphinx-doc/sphinx
+  License: BSD-2-Clause
+  Copyright (c) 2007-2025 the Sphinx team

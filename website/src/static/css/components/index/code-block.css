@@ -1,0 +1,119 @@
+/* CodeBlock Component */
+.code-block {
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: 0 1.5rem 4rem;
+}
+
+.code-block__title {
+  font-family: var(--font-orbitron);
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  margin-bottom: 1.5rem;
+}
+
+.code-block__terminal {
+  border: 1px solid var(--border-subtle);
+  background: var(--void-deep);
+  overflow: hidden;
+}
+
+.code-block__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.code-block__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.code-block__dot--red { background: #ff5f56; }
+.code-block__dot--yellow { background: #ffbd2e; }
+.code-block__dot--green { background: #27c93f; }
+
+.code-block__label {
+  margin-left: auto;
+  font-family: var(--font-share-tech);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.code-block__body {
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+}
+
+.code-block__pre {
+  margin: 0;
+  font-family: var(--font-share-tech);
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+  white-space: pre;
+}
+
+.code-block__prompt {
+  color: var(--phosphor-green);
+  user-select: none;
+}
+
+.code-block__comment {
+  color: var(--text-dim);
+}
+
+@media (max-width: 768px) {
+  .code-block {
+    padding: 0 1.25rem 3rem;
+  }
+
+  .code-block__pre {
+    font-size: 0.75rem;
+  }
+}
+
+/* Light theme */
+[data-theme="light"] .code-block__terminal {
+  background: #1e1e2e;
+}
+
+[data-theme="light"] .code-block__pre {
+  color: #e0e0f0;
+}
+
+[data-theme="light"] .code-block__prompt {
+  color: #39ff14;
+}
+
+[data-theme="light"] .code-block__comment {
+  color: rgba(224, 224, 240, 0.5);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .code-block__terminal {
+    background: #1e1e2e;
+  }
+
+  :root:not([data-theme]) .code-block__pre {
+    color: #e0e0f0;
+  }
+
+  :root:not([data-theme]) .code-block__prompt {
+    color: #39ff14;
+  }
+
+  :root:not([data-theme]) .code-block__comment {
+    color: rgba(224, 224, 240, 0.5);
+  }
+}

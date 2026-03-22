@@ -1,0 +1,72 @@
+set shell := ["zsh", "-cu"]
+set dotenv-load
+set export
+set allow-duplicate-recipes
+
+# Display all available recipes
+[default]
+@help:
+    just --list
+
+# -----------------------------------------------------------------------
+# Build recipes
+# -----------------------------------------------------------------------
+
+# Clean build artifacts
+clean: _ensure-project-root
+    bash scripts/_default/clean.sh
+
+# Build default app (TSX -> esbuild bundle -> public/)
+build: _ensure-project-root
+    bash scripts/_default/build.sh
+
+# Clean and build (full rebuild)
+all: _ensure-project-root
+    bash scripts/_default/all.sh
+
+# -----------------------------------------------------------------------
+# TypeScript & Development
+# -----------------------------------------------------------------------
+
+# Type-check TypeScript (tsc --noEmit)
+ts-check: _ensure-project-root
+    npx tsc --project tsconfig.tsc.config --noEmit
+
+# Watch mode -- incremental rebuilds on change
+watch: _ensure-project-root
+    node scripts/_default/build.mjs --watch
+
+# Alias for watch mode
+dev: watch
+
+# -----------------------------------------------------------------------
+# Linting & Code Quality
+# -----------------------------------------------------------------------
+
+# Lint TypeScript/TSX files
+lint: _ensure-project-root
+    npx eslint src/
+
+# Auto-fix linting issues
+lint-fix: _ensure-project-root
+    npx eslint src/ --fix
+
+# -----------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------
+
+# Install npm dependencies
+install:
+    npm install
+
+# -----------------------------------------------------------------------
+# Internal helpers (prefixed with _)
+# -----------------------------------------------------------------------
+
+[private]
+@_ensure-project-root:
+    #!/usr/bin/env zsh
+    if [[ ! -f "package.json" ]]; then
+        echo "Error: package.json not found. Run from project root."
+        exit 1
+    fi

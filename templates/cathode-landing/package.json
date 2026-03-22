@@ -1,0 +1,26 @@
+{
+  "name": "<<name>>",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "clean:_default": "bash scripts/_default/clean.sh",
+    "build:_default": "bash scripts/_default/build.sh",
+    "all:_default": "bash scripts/_default/all.sh",
+    "ts-check": "npx tsc --project tsconfig.tsc.config --noEmit",
+    "watch:_default": "node scripts/_default/build.mjs --watch",
+    "lint": "npx eslint src/",
+    "lint-fix": "npx eslint src/ --fix"
+  },
+  "dependencies": {
+    "@relicloops/cathode": "2.1.0-000"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.54.0",
+    "@typescript-eslint/parser": "^8.54.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^9.39.2",
+    "eslint-plugin-perfectionist": "^5.4.0",
+    "typescript": "^5.9.3"
+  }
+}

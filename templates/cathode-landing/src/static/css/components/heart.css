@@ -1,0 +1,25 @@
+/* Heart */
+.heart {
+  color: var(--neon-red);
+  display: inline-block;
+  transform-origin: center;
+  animation: heart-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heart {
+    animation: none;
+  }
+}
+
+@keyframes heart-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 rgba(255, 51, 102, 0));
+  }
+  50% {
+    transform: scale(1.12);
+    filter: drop-shadow(0 0 12px rgba(255, 51, 102, 0.75));
+  }
+}

@@ -1,0 +1,2 @@
+option('script_fallback', type : 'boolean', value : false,
+       description : 'Enable shell script fallback for build/clean commands')

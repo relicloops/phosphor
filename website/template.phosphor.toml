@@ -1,0 +1,69 @@
+[manifest]
+schema = 1
+id = "phosphor-website"
+version = "0.1.0"
+
+[template]
+name = "Phosphor Website"
+source_root = "."
+description = "Cathode JSX SPA website template for the phosphor CLI"
+min_phosphor = "0.0.0-017"
+license = "Apache-2.0"
+
+[[variables]]
+name = "name"
+type = "string"
+required = true
+default = "phosphor-website"
+
+[[variables]]
+name = "github_url"
+type = "url"
+default = "https://github.com/relicloops/phosphor"
+
+[[variables]]
+name = "description"
+type = "string"
+default = "Cathode JSX SPA website for the phosphor CLI"
+
+[filters]
+exclude = [
+  "node_modules",
+  "build",
+  "public",
+  ".DS_Store",
+]
+binary_ext = [".svg", ".png", ".jpg", ".gif", ".ico", ".woff2"]
+
+[build]
+entry = "src/app.tsx"
+
+[[build.defines]]
+name = "__PHOSPHOR_DEV__"
+env = "PHOSPHOR_WEBSITE_DEV"
+default = "false"
+
+[[build.defines]]
+name = "__PHOSPHOR_PUBLIC_DIR__"
+env = "PHOSPHOR_WEBSITE_PUBLIC_DIR"
+default = ""
+
+[certs]
+output_dir = "certs"
+
+[[certs.domains]]
+name = "phosphor.relicloops.local"
+mode = "local"
+san = ["relicloops", "localhost", "127.0.0.1"]
+
+[[ops]]
+id = "render-source"
+kind = "render"
+from = "."
+to = "."
+
+[[hooks]]
+when = "post-create"
+run = ["npm", "install"]
+cwd = "."
+allow_failure = true

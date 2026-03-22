@@ -1,0 +1,105 @@
+/* FeatureGrid Component */
+.feature-grid {
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+.feature-grid__title {
+  font-family: var(--font-orbitron);
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  margin-bottom: 2rem;
+}
+
+.feature-grid__cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+}
+
+.feature-card {
+  padding: 1.75rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.feature-card:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 0 20px var(--phosphor-glow);
+}
+
+.feature-card__icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: var(--phosphor-green);
+  text-shadow: 0 0 8px var(--phosphor-glow);
+}
+
+.feature-card__name {
+  font-family: var(--font-orbitron);
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.feature-card__desc {
+  font-family: var(--font-share-tech);
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.feature-card__usage {
+  margin-top: 0.75rem;
+  font-family: var(--font-share-tech);
+  font-size: 0.8rem;
+  color: var(--phosphor-green);
+  opacity: 0.8;
+}
+
+@media (max-width: 768px) {
+  .feature-grid {
+    padding: 3rem 1.25rem;
+  }
+
+  .feature-grid__cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Light theme */
+[data-theme="light"] .feature-card:hover {
+  box-shadow: 0 0 16px rgba(123, 47, 247, 0.2);
+}
+
+[data-theme="light"] .feature-card__icon {
+  color: var(--uv-violet);
+  text-shadow: none;
+}
+
+[data-theme="light"] .feature-card__usage {
+  color: var(--uv-violet);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .feature-card:hover {
+    box-shadow: 0 0 16px rgba(123, 47, 247, 0.2);
+  }
+
+  :root:not([data-theme]) .feature-card__icon {
+    color: var(--uv-violet);
+    text-shadow: none;
+  }
+
+  :root:not([data-theme]) .feature-card__usage {
+    color: var(--uv-violet);
+  }
+}

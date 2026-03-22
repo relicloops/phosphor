@@ -1,0 +1,107 @@
+/* Hero Component */
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(4rem, 8vw, 7rem) 1.5rem clamp(4rem, 10vw, 8rem);
+  background:
+    radial-gradient(520px 240px at 18% 18%, rgba(57, 255, 20, 0.14), transparent 60%),
+    radial-gradient(520px 240px at 82% 30%, rgba(123, 47, 247, 0.12), transparent 60%),
+    linear-gradient(180deg, var(--bg-primary), var(--bg-secondary));
+}
+
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0) 61.8%
+  );
+  pointer-events: none;
+}
+
+.hero__inner {
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: clamp(2rem, 4vw, 4rem);
+  position: relative;
+  z-index: 1;
+}
+
+.hero__content {
+  display: grid;
+  gap: 1.5rem;
+  text-align: center;
+  justify-items: center;
+}
+
+.hero__title {
+  margin: 0;
+  font-family: var(--font-audiowide), var(--font-orbitron);
+  font-size: clamp(2.4rem, 4vw, 4.2rem);
+  line-height: 1.15;
+  color: var(--text-primary);
+  text-shadow: 0 0 30px var(--phosphor-glow);
+}
+
+.hero__lead {
+  margin: 0;
+  max-width: 56ch;
+  font-family: var(--font-share-tech);
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.hero__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  font-family: var(--font-share-tech);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  border-radius: 2px;
+  transition: color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.hero__cta--primary {
+  color: var(--cta-text);
+  background: var(--cta-bg);
+  border: 1px solid var(--cta-border);
+}
+
+.hero__cta--primary:hover,
+.hero__cta--primary:focus-visible {
+  color: var(--cta-hover-text);
+  background: var(--cta-hover-bg);
+  border-color: var(--cta-hover-bg);
+  box-shadow: 0 0 16px var(--cta-border);
+}
+
+@media (max-width: 768px) {
+  .hero {
+    padding: 3.5rem 1.25rem 4.5rem;
+  }
+}
+
+/* Light theme tweaks */
+[data-theme="light"] .hero__title {
+  text-shadow: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .hero__title {
+    text-shadow: none;
+  }
+}

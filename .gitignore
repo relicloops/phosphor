@@ -1,0 +1,44 @@
+# meson build directory
+build/
+
+# ceedling build output
+build/ceedling/
+
+# clangd / editor caches
+.cache/
+
+# sphinx python virtual environment
+docs/.venv/
+
+# sphinx build output
+docs/build/
+
+# vendored subproject checkouts (fetched by meson wrap)
+subprojects/toml-c/
+subprojects/libgit2/
+subprojects/libarchive/
+subprojects/pcre2/
+subprojects/curl/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.claude/
+.vscode/
+*.code-workspace
+
+# website build output
+website/build/
+website/public/
+website/node_modules/
+
+# website sensitive runtime data
+website/certs/
+website/data/
+website/keys/

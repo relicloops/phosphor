@@ -1,0 +1,242 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            cc: clang
+          - os: ubuntu-latest
+            cc: gcc
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Meson and Ninja
+        run: pip3 install meson ninja
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libssl-dev
+
+      - name: Setup build
+        run: meson setup build
+
+      - name: Compile
+        run: ninja -C build
+
+      - name: Smoke test
+        run: ./build/phosphor version
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install Ceedling
+        run: gem install ceedling -v 1.0.1
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libssl-dev
+          pip3 install meson ninja
+
+      - name: Setup build and PCRE2
+        run: |
+          meson setup build
+          ninja -C build subprojects/pcre2/libpcre2_8_static.a
+          # Repack thin archive as regular (Meson on Linux uses thin by default)
+          ar rcs build/subprojects/pcre2/libpcre2_8_fat.a \
+            build/subprojects/pcre2/libpcre2_8_static.a.p/*.o
+          mv build/subprojects/pcre2/libpcre2_8_fat.a \
+            build/subprojects/pcre2/libpcre2_8_static.a
+
+      - name: Run unit tests
+        run: |
+          # Ceedling places link flags before objects. Static archives need
+          # correct order; --whole-archive forces all symbols to be included.
+          sed -i 's/- -Lbuild\/subprojects\/pcre2/- -Wl,--whole-archive\n        - -Lbuild\/subprojects\/pcre2/' project.yml
+          sed -i 's/- -lpcre2_8_static/- -lpcre2_8_static\n        - -Wl,--no-whole-archive/' project.yml
+          ceedling test:all
+
+  integration:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Meson and Ninja
+        run: pip3 install meson ninja
+
+      - name: Setup and build
+        run: meson setup build && ninja -C build
+
+      - name: Run integration tests (create)
+        run: sh tests/integration/test_create_golden.sh ./build/phosphor
+
+      - name: Run integration tests (glow)
+        run: sh tests/integration/test_glow_golden.sh ./build/phosphor
+
+  release-build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            cc: clang
+            target: macos-arm64
+          - os: ubuntu-latest
+            cc: gcc
+            target: linux-x86_64
+          - os: ubuntu-24.04-arm
+            cc: gcc
+            target: linux-arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Meson and Ninja
+        run: pip3 install meson ninja
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libssl-dev zlib1g-dev libzstd-dev
+
+      - name: Set OpenSSL root (macOS)
+        if: runner.os == 'macOS'
+        run: echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Setup release build
+        run: meson setup build -Dbuildtype=release -Doptimization=2
+
+      - name: Compile
+        run: ninja -C build
+
+      - name: Verify binary
+        run: ./build/phosphor version
+
+      - name: Check dynamic deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "Dynamic dependencies:"
+          ldd ./build/phosphor
+          if ldd ./build/phosphor | grep -q 'libssl\|libcrypto'; then
+            echo "WARNING: OpenSSL is dynamically linked"
+          else
+            echo "OK: OpenSSL is statically linked"
+          fi
+
+      - name: Check dynamic deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "Dynamic dependencies:"
+          otool -L ./build/phosphor
+
+      - name: Package binary
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          DIR="phosphor-${TAG}-${{ matrix.target }}"
+          TARBALL="${DIR}.tar.gz"
+          mkdir "$DIR"
+          cp ./build/phosphor "$DIR/"
+          chmod +x "$DIR/phosphor"
+          tar czf "$TARBALL" "$DIR"
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "$TARBALL" > "${TARBALL}.sha256"
+          else
+            shasum -a 256 "$TARBALL" > "${TARBALL}.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phosphor-${{ matrix.target }}
+          path: |
+            phosphor-v*-${{ matrix.target }}.tar.gz
+            phosphor-v*-${{ matrix.target }}.tar.gz.sha256
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, unit-tests, integration, release-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install git-cliff
+        run: pip3 install git-cliff
+
+      - name: Generate release notes
+        run: git-cliff --config cliff.toml --latest --strip header > RELEASE_NOTES.md
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PRERELEASE_FLAG=""
+          if echo "$TAG" | grep -q "^v0\."; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file RELEASE_NOTES.md \
+            $PRERELEASE_FLAG \
+            artifacts/*

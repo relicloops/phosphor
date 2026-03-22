@@ -1,0 +1,45 @@
+[manifest]
+schema = 1
+id = "minimal-test"
+version = "0.1.0"
+
+[template]
+name = "Minimal Test Template"
+source_root = "src"
+
+[[variables]]
+name = "name"
+type = "string"
+required = true
+
+[[variables]]
+name = "author"
+type = "string"
+default = "Test Author"
+
+[[variables]]
+name = "year"
+type = "string"
+default = "2026"
+
+[filters]
+exclude = [".git", "*.bak"]
+
+[[ops]]
+kind = "mkdir"
+to = "."
+
+[[ops]]
+kind = "render"
+from = "README.md"
+to = "README.md"
+
+[[ops]]
+kind = "copy"
+from = "main.c"
+to = "src/main.c"
+
+[[ops]]
+kind = "render"
+from = "config.h"
+to = "include/config.h"

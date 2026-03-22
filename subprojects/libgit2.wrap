@@ -1,0 +1,4 @@
+[wrap-git]
+url = https://github.com/libgit2/libgit2.git
+revision = v1.9.2
+depth = 1
