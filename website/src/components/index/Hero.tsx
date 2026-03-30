@@ -20,7 +20,7 @@ const QUICK_START_LINES: TerminalLine[] = [
   { type: 'blank' },
   { type: 'comment', text: 'verify the installation' },
   { type: 'command', text: './build/phosphor version' },
-  { type: 'output',  text: 'phosphor 0.0.1-022' },
+  { type: 'output',  text: 'phosphor 0.0.2-023' },
 ];
 
 export const Hero = () => {
@@ -69,7 +69,7 @@ export const Hero = () => {
             </div>
             <div class="hero__meta-item">
               <span class="hero__meta-label">Version</span>
-              <span class="hero__meta-value">0.0.1-022</span>
+              <span class="hero__meta-value">0.0.2-023</span>
             </div>
           </div>
         </div>

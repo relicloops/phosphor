@@ -6,8 +6,8 @@ copyright = "2025-2026, NeonSignal Contributors"
 author = "Simone Del Popolo"
 
 # Phosphor version -- keep in sync with phosphor_version in meson.build
-version = "0.0.1"
-release = "0.0.1-022"
+version = "0.0.2"
+release = "0.0.2-023"
 
 # -- General configuration ---------------------------------------------------
 

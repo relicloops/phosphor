@@ -1,5 +1,5 @@
 project('phosphor', 'c',
-  version : '0.0.1',
+  version : '0.0.2',
   license : 'Apache-2.0',
   meson_version : '>=1.1',
   default_options : [
@@ -18,7 +18,7 @@ add_project_arguments('-D_POSIX_C_SOURCE=200809L', language : 'c')
 inc = include_directories('include')
 
 # full version with build suffix (vMAJOR.MINOR.PATCH-BUILD)
-phosphor_version = '0.0.1-022'
+phosphor_version = '0.0.2-023'
 
 # ---- dependencies ---- #
 
