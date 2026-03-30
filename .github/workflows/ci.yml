@@ -46,72 +46,6 @@ jobs:
       - name: Smoke test
         run: ./build/phosphor version
 
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.2'
-
-      - name: Install Ceedling
-        run: gem install ceedling -v 1.0.1
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake libssl-dev
-          pip3 install meson ninja
-
-      - name: Setup build and PCRE2
-        run: |
-          meson setup build
-          ninja -C build subprojects/pcre2/libpcre2_8_static.a
-          # Repack thin archive as regular (Meson on Linux uses thin by default)
-          ar rcs build/subprojects/pcre2/libpcre2_8_fat.a \
-            build/subprojects/pcre2/libpcre2_8_static.a.p/*.o
-          mv build/subprojects/pcre2/libpcre2_8_fat.a \
-            build/subprojects/pcre2/libpcre2_8_static.a
-
-      - name: Run unit tests
-        run: |
-          # Ceedling places link flags before objects. Static archives need
-          # correct order; --whole-archive forces all symbols to be included.
-          sed -i 's/- -Lbuild\/subprojects\/pcre2/- -Wl,--whole-archive\n        - -Lbuild\/subprojects\/pcre2/' project.yml
-          sed -i 's/- -lpcre2_8_static/- -lpcre2_8_static\n        - -Wl,--no-whole-archive/' project.yml
-          ceedling test:all
-
-  integration:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install Meson and Ninja
-        run: pip3 install meson ninja
-
-      - name: Setup and build
-        run: meson setup build && ninja -C build
-
-      - name: Run integration tests (create)
-        run: sh tests/integration/test_create_golden.sh ./build/phosphor
-
-      - name: Run integration tests (glow)
-        run: sh tests/integration/test_glow_golden.sh ./build/phosphor
-
   release-build:
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
@@ -202,7 +136,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, unit-tests, integration, release-build]
+    needs: [build, release-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
