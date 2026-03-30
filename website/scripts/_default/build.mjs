@@ -31,7 +31,7 @@ for (let i = 0; i < args.length; i++) {
   switch (args[i]) {
     case '--build':          buildDir  = args[++i]; break;
     case '--public':
-    case '--deploy':         publicDir = args[++i]; break;
+    case '--deploy':         publicDir = resolve(args[++i]); break;
     case '--watch':          watchMode = true;      break;
     case '--help': case '-h':
       console.log('Usage: node build.mjs [--build <dir>] [--public <dir>] [--watch]');
