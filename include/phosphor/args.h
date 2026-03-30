@@ -110,6 +110,7 @@ typedef struct {
     const char *const *choices;
     size_t             choice_count;
     const char        *description;
+    const char        *var_name;    /* manifest variable name override (NULL = use flag name) */
 } ph_argspec_t;
 
 /* ---- command definition (provided by application) ---- */

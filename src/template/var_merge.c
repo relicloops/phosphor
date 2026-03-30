@@ -146,9 +146,22 @@ ph_result_t ph_var_merge(const ph_var_merge_ctx_t *ctx,
 
         const char *value = NULL;
 
-        /* precedence 1: CLI flags */
+        /* precedence 1: CLI flags (with argspec var_name mapping) */
         if (ctx->args) {
-            value = ph_args_get_flag(ctx->args, def->name);
+            const char *lookup_name = def->name;
+            if (ctx->cli_config) {
+                size_t sc = 0;
+                const ph_argspec_t *specs =
+                    ph_cmd_def_specs(ctx->cli_config, ctx->args->command_id, &sc);
+                for (size_t s = 0; specs && s < sc; s++) {
+                    if (specs[s].var_name &&
+                        strcmp(specs[s].var_name, def->name) == 0) {
+                        lookup_name = specs[s].name;
+                        break;
+                    }
+                }
+            }
+            value = ph_args_get_flag(ctx->args, lookup_name);
         }
 
         /* precedence 2: env vars */
