@@ -15,6 +15,7 @@ enum {
     PHOSPHOR_CMD_RM      = 7,
     PHOSPHOR_CMD_CERTS   = 8,
     PHOSPHOR_CMD_GLOW    = 9,
+    PHOSPHOR_CMD_SERVE   = 10,
 };
 
 /* ---- phosphor CLI configuration ---- */
@@ -45,5 +46,8 @@ int ph_cmd_doctor(const ph_cli_config_t *config,
 int ph_cmd_glow(const ph_cli_config_t *config,
                 const ph_parsed_args_t *args);
 #endif
+
+int ph_cmd_serve(const ph_cli_config_t *config,
+                 const ph_parsed_args_t *args);
 
 #endif /* PHOSPHOR_COMMANDS_H */

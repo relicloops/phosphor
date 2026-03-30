@@ -168,10 +168,12 @@ static const ph_argspec_t glow_specs[] = {
      "custom output directory; overrides --name for destination"},
     {"description", PH_TYPE_STRING, PH_FORM_VALUED, false,
      "A Cathode JSX website", NULL, 0,
-     "project description; passed to template variables"},
+     "project description; passed to template variables",
+     "project_description"},
     {"github-url", PH_TYPE_URL, PH_FORM_VALUED, false,
      "https://github.com", NULL, 0,
-     "GitHub URL; passed to template variables"},
+     "GitHub URL; passed to template variables",
+     "github_url"},
     {"force", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
      "overwrite existing destination files"},
     {"dry-run", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
@@ -180,6 +182,66 @@ static const ph_argspec_t glow_specs[] = {
      "enable verbose output"},
 };
 #endif
+
+/*
+ * Serve command -- spawn neonsignal + neonsignal_redirect
+ */
+
+/* neonsignal flags */
+static const ph_argspec_t serve_specs[] = {
+    {"project", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "project root directory; defaults to current directory"},
+    {"verbose", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
+     "enable debug-level logging"},
+    {"neonsignal-bin", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "path to neonsignal binary; default searches PATH"},
+    {"redirect-bin", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "path to neonsignal_redirect binary; default searches PATH"},
+    {"no-redirect", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
+     "skip launching the HTTP->HTTPS redirect service"},
+    /* neonsignal spin options */
+    {"threads", PH_TYPE_INT, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "neonsignal worker threads (default: 3)"},
+    {"host", PH_TYPE_STRING, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "neonsignal bind address (default: 0.0.0.0)"},
+    {"port", PH_TYPE_INT, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "neonsignal HTTPS listen port (default: 9443)"},
+    {"www-root", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "static files root directory (default: from manifest or 'public')"},
+    {"certs-root", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "TLS certificates directory (default: from manifest or 'certs')"},
+    {"working-dir", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "neonsignal working directory for resolving paths"},
+    {"upload-dir", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "neonsignal upload directory override"},
+    {"augments-dir", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "neonsignal API augments directory"},
+    {"grafts-dir", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "neonsignal grafts directory"},
+    /* watch */
+    {"watch", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
+     "start file watcher alongside neonsignal (rebuilds on source changes)"},
+    {"watch-cmd", PH_TYPE_STRING, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "custom watch command (default: node scripts/_default/build.mjs --watch)"},
+    /* dashboard */
+    {"no-dashboard", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
+     "disable ncurses dashboard; show raw process output"},
+    /* neonsignal_redirect spin options */
+    {"redirect-instances", PH_TYPE_INT, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "redirect service instances (default: 2)"},
+    {"redirect-host", PH_TYPE_STRING, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "redirect bind address (default: 0.0.0.0)"},
+    {"redirect-port", PH_TYPE_INT, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "redirect HTTP listen port (default: 9090)"},
+    {"redirect-target-port", PH_TYPE_INT, PH_FORM_VALUED, false, NULL, NULL, 0,
+     "redirect HTTPS target port (default: neonsignal port)"},
+    {"redirect-acme-webroot", PH_TYPE_PATH, PH_FORM_VALUED, false,
+     NULL, NULL, 0,
+     "redirect ACME webroot directory for challenges"},
+    {"redirect-working-dir", PH_TYPE_PATH, PH_FORM_VALUED, false,
+     NULL, NULL, 0,
+     "redirect working directory for resolving paths"},
+};
 
 /* version and help have no flags (appendix E) */
 
@@ -202,6 +264,8 @@ static const ph_cmd_def_t phosphor_commands[] = {
     {"glow", PHOSPHOR_CMD_GLOW, glow_specs, ARRAY_LEN(glow_specs),
      false, "scaffold a Cathode landing page from embedded template"},
 #endif
+    {"serve", PHOSPHOR_CMD_SERVE, serve_specs, ARRAY_LEN(serve_specs),
+     false, "start neonsignal dev server for the project"},
     {"version", PHOSPHOR_CMD_VERSION, NULL, 0, false,
      "print phosphor version"},
     {"help", PHOSPHOR_CMD_HELP, NULL, 0, true,

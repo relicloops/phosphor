@@ -49,6 +49,7 @@ phosphor_sources = files(
   'src/core/config.c',
   'src/core/log.c',
   'src/core/color.c',
+  'src/core/term.c',
   'src/core/regex.c',
   # io
   'src/io/fs_readwrite.c',
@@ -82,6 +83,11 @@ phosphor_sources = files(
   'src/commands/rm_cmd.c',
   'src/commands/doctor_cmd.c',
   'src/commands/certs_cmd.c',
+  'src/commands/serve_cmd.c',
+  # serve
+  'src/serve/serve.c',
+  # dashboard
+  'src/dashboard/dashboard.c',
   # certs
   'src/certs/acme_json.c',
   'src/certs/certs_config.c',
@@ -255,6 +261,20 @@ endif
 if host_machine.system() == 'linux'
   phosphor_deps += cc.find_library('pthread', required : false)
   phosphor_deps += cc.find_library('dl', required : false)
+endif
+
+# ncurses: serve dashboard TUI
+if get_option('dashboard')
+  ncurses_dep = dependency('ncurses', required : false)
+  if not ncurses_dep.found()
+    ncurses_dep = cc.find_library('ncurses', required : false)
+  endif
+  if ncurses_dep.found()
+    phosphor_c_args += '-DPHOSPHOR_HAS_NCURSES=1'
+    phosphor_deps += ncurses_dep
+  else
+    warning('ncurses not found -- serve dashboard disabled')
+  endif
 endif
 
 # ---- embedded template codegen ---- #

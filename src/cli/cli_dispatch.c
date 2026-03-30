@@ -37,6 +37,9 @@ int ph_cli_dispatch(const ph_cli_config_t *config,
         return ph_cmd_glow(config, args);
 #endif
 
+    case PHOSPHOR_CMD_SERVE:
+        return ph_cmd_serve(config, args);
+
     default:
         return PH_ERR_INTERNAL;
     }
