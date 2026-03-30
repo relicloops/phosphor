@@ -9,6 +9,7 @@
 #include "phosphor/path.h"
 #include "phosphor/platform.h"
 #include "phosphor/proc.h"
+#include "phosphor/certs.h"
 #include "phosphor/signal.h"
 
 #include <dirent.h>
@@ -427,10 +428,16 @@ int ph_cmd_build(const ph_cli_config_t *config,
         return PH_ERR_INTERNAL;
     }
 
+    /* step 4: compute deploy path -- priority chain:
+     *   1. CLI --deploy-at flag (explicit override)
+     *   2. [deploy] public_dir from manifest
+     *   3. Auto-derive from first [[certs.domains]] name -> "public/{name}"
+     *   4. Env fallback: public/{SNI}{TLD}
+     */
     char *deploy_dir = NULL;
 
     if (deploy_at_val) {
-        /* resolve --deploy-at to absolute */
+        /* tier 1: --deploy-at flag */
         if (ph_path_is_absolute(deploy_at_val)) {
             deploy_dir = ph_path_normalize(deploy_at_val);
         } else {
@@ -458,8 +465,52 @@ int ph_cmd_build(const ph_cli_config_t *config,
             ph_free(project_root_abs);
             return PH_ERR_VALIDATE;
         }
-    } else {
-        /* default: project_root/public/SNI+TLD */
+    }
+
+    if (!deploy_dir && has_manifest && manifest.deploy.present &&
+        manifest.deploy.public_dir) {
+        /* tier 2: [deploy] public_dir from manifest */
+        char *joined = ph_path_join(project_root_abs,
+                                     manifest.deploy.public_dir);
+        if (joined) {
+            deploy_dir = ph_path_normalize(joined);
+            ph_free(joined);
+        }
+        if (deploy_dir)
+            ph_log_debug("build: deploy path from [deploy] public_dir: %s",
+                          deploy_dir);
+    }
+
+    if (!deploy_dir && has_manifest) {
+        /* tier 3: auto-derive from first [[certs.domains]] name */
+        char *toml_path = ph_path_join(project_root_abs,
+                                        "template.phosphor.toml");
+        if (toml_path) {
+            ph_certs_config_t certs_cfg;
+            memset(&certs_cfg, 0, sizeof(certs_cfg));
+            ph_error_t *cerr = NULL;
+            if (ph_certs_config_parse(toml_path, &certs_cfg, &cerr) == PH_OK
+                && certs_cfg.present && certs_cfg.domain_count > 0
+                && certs_cfg.domains[0].name) {
+
+                char *pub = ph_path_join(project_root_abs, "public");
+                if (pub) {
+                    deploy_dir = ph_path_join(pub,
+                                               certs_cfg.domains[0].name);
+                    ph_free(pub);
+                }
+                if (deploy_dir)
+                    ph_log_debug("build: deploy path from "
+                                  "certs.domains[0].name: %s", deploy_dir);
+            }
+            ph_error_destroy(cerr);
+            ph_certs_config_destroy(&certs_cfg);
+            ph_free(toml_path);
+        }
+    }
+
+    if (!deploy_dir) {
+        /* tier 4: env fallback -- public/{SNI}{TLD} */
         const char *sni = env_or("SNI", "unknown");
         size_t sni_tld_len = strlen(sni) + strlen(tld_eff) + 1;
         char *sni_tld = ph_alloc(sni_tld_len);
@@ -676,6 +727,25 @@ int ph_cmd_build(const ph_cli_config_t *config,
                     const char *env_val = getenv(d->env);
                     if (env_val && env_val[0] != '\0') val = env_val;
                 }
+
+                /* auto-populate *_PUBLIC_DIR__ from resolved deploy path */
+                if ((!val || val[0] == '\0') && deploy_dir) {
+                    size_t nlen = strlen(d->name);
+                    if (nlen >= 14 &&
+                        strcmp(d->name + nlen - 14, "_PUBLIC_DIR__") == 0) {
+                        /* use project-relative deploy path */
+                        size_t rlen = strlen(project_root_abs);
+                        if (strncmp(deploy_dir, project_root_abs, rlen) == 0
+                            && deploy_dir[rlen] == '/') {
+                            val = deploy_dir + rlen + 1;
+                        } else {
+                            val = deploy_dir;
+                        }
+                        ph_log_debug("build: auto-populated %s = \"%s\" "
+                                      "from deploy path", d->name, val);
+                    }
+                }
+
                 ph_argv_pushf(&ab, "--define:%s=\"%s\"", d->name, val);
             }
         } else {
