@@ -323,6 +323,76 @@ static ph_result_t parse_build_config(toml_table_t *root,
     return PH_OK;
 }
 
+static ph_result_t parse_deploy_config(toml_table_t *root,
+                                        ph_deploy_config_t *out) {
+    toml_table_t *d = toml_table_table(root, "deploy");
+    if (!d) {
+        out->present = false;
+        return PH_OK;
+    }
+
+    out->present = true;
+    out->public_dir = toml_get_string(d, "public_dir");
+    return PH_OK;
+}
+
+static ph_result_t parse_serve_config(toml_table_t *root,
+                                       ph_serve_manifest_config_t *out) {
+    toml_table_t *s = toml_table_table(root, "serve");
+    if (!s) {
+        out->present = false;
+        return PH_OK;
+    }
+
+    out->present = true;
+
+    toml_value_t nr = toml_table_bool(s, "no_redirect");
+    out->no_redirect = nr.ok && nr.u.b;
+
+    /* [serve.neonsignal] */
+    toml_table_t *ns = toml_table_table(s, "neonsignal");
+    if (ns) {
+        out->ns_bin       = toml_get_string(ns, "bin");
+        out->ns_host      = toml_get_string(ns, "host");
+        out->ns_www_root  = toml_get_string(ns, "www_root");
+        out->ns_certs_root = toml_get_string(ns, "certs_root");
+        out->ns_working_dir = toml_get_string(ns, "working_dir");
+        out->ns_upload_dir  = toml_get_string(ns, "upload_dir");
+        out->ns_augments_dir = toml_get_string(ns, "augments_dir");
+        out->ns_grafts_dir  = toml_get_string(ns, "grafts_dir");
+
+        toml_value_t th = toml_table_int(ns, "threads");
+        if (th.ok) out->ns_threads = (int)th.u.i;
+
+        toml_value_t pt = toml_table_int(ns, "port");
+        if (pt.ok) out->ns_port = (int)pt.u.i;
+
+        toml_value_t wt = toml_table_bool(ns, "watch");
+        out->ns_watch = wt.ok && wt.u.b;
+        out->ns_watch_cmd = toml_get_string(ns, "watch_cmd");
+    }
+
+    /* [serve.redirect] */
+    toml_table_t *rd = toml_table_table(s, "redirect");
+    if (rd) {
+        out->redir_bin       = toml_get_string(rd, "bin");
+        out->redir_host      = toml_get_string(rd, "host");
+        out->redir_acme_webroot = toml_get_string(rd, "acme_webroot");
+        out->redir_working_dir  = toml_get_string(rd, "working_dir");
+
+        toml_value_t ri = toml_table_int(rd, "instances");
+        if (ri.ok) out->redir_instances = (int)ri.u.i;
+
+        toml_value_t rp = toml_table_int(rd, "port");
+        if (rp.ok) out->redir_port = (int)rp.u.i;
+
+        toml_value_t tp = toml_table_int(rd, "target_port");
+        if (tp.ok) out->redir_target_port = (int)tp.u.i;
+    }
+
+    return PH_OK;
+}
+
 static ph_result_t parse_ops(toml_table_t *root,
                               ph_op_def_t **out_ops,
                               size_t *out_count,
@@ -509,6 +579,12 @@ ph_result_t ph_manifest_load(const char *path, ph_manifest_t *out,
     rc = parse_build_config(root, &out->build, err);
     if (rc != PH_OK) { toml_free(root); return PH_ERR; }
 
+    rc = parse_deploy_config(root, &out->deploy);
+    if (rc != PH_OK) { toml_free(root); return PH_ERR; }
+
+    rc = parse_serve_config(root, &out->serve);
+    if (rc != PH_OK) { toml_free(root); return PH_ERR; }
+
     rc = parse_ops(root, &out->ops, &out->op_count, err);
     if (rc != PH_OK) { toml_free(root); return PH_ERR; }
 
@@ -598,6 +674,24 @@ void ph_manifest_destroy(ph_manifest_t *m) {
         ph_free(m->build.defines[i].default_val);
     }
     ph_free(m->build.defines);
+
+    /* deploy config */
+    ph_free(m->deploy.public_dir);
+
+    /* serve config */
+    ph_free(m->serve.ns_bin);
+    ph_free(m->serve.ns_host);
+    ph_free(m->serve.ns_www_root);
+    ph_free(m->serve.ns_certs_root);
+    ph_free(m->serve.ns_working_dir);
+    ph_free(m->serve.ns_upload_dir);
+    ph_free(m->serve.ns_augments_dir);
+    ph_free(m->serve.ns_grafts_dir);
+    ph_free(m->serve.ns_watch_cmd);
+    ph_free(m->serve.redir_bin);
+    ph_free(m->serve.redir_host);
+    ph_free(m->serve.redir_acme_webroot);
+    ph_free(m->serve.redir_working_dir);
 
     /* ops */
     for (size_t i = 0; i < m->op_count; i++) {

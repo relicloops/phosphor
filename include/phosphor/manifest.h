@@ -134,6 +134,52 @@ typedef struct {
     bool                present;      /* true if [build] found in TOML */
 } ph_build_config_t;
 
+/* ---- deploy configuration ---- */
+
+typedef struct {
+    char *public_dir;   /* relative path, e.g. "public/mysite.host" */
+    bool  present;      /* true if [deploy] found in TOML */
+} ph_deploy_config_t;
+
+/* ---- serve configuration ---- */
+
+/*
+ * ph_serve_manifest_config_t -- [serve] section from template.phosphor.toml.
+ *
+ * provides manifest-level defaults for `phosphor serve`.
+ * CLI flags override these; these override [deploy]/[certs] derived values.
+ *
+ * ownership: all string fields heap-allocated, freed by ph_manifest_destroy.
+ */
+typedef struct {
+    /* [serve.neonsignal] */
+    char *ns_bin;             /* override neonsignal binary path */
+    int   ns_threads;         /* 0 = not set */
+    char *ns_host;
+    int   ns_port;            /* 0 = not set */
+    char *ns_www_root;
+    char *ns_certs_root;
+    char *ns_working_dir;
+    char *ns_upload_dir;
+    char *ns_augments_dir;
+    char *ns_grafts_dir;
+    bool  ns_watch;           /* start file watcher alongside server */
+    char *ns_watch_cmd;       /* shell command; NULL = default */
+
+    /* [serve.redirect] */
+    char *redir_bin;          /* override neonsignal_redirect binary path */
+    int   redir_instances;    /* 0 = not set */
+    char *redir_host;
+    int   redir_port;         /* 0 = not set */
+    int   redir_target_port;  /* 0 = not set */
+    char *redir_acme_webroot;
+    char *redir_working_dir;
+
+    /* [serve] top-level */
+    bool  no_redirect;
+    bool  present;            /* true if [serve] found in TOML */
+} ph_serve_manifest_config_t;
+
 /* ---- manifest metadata ---- */
 
 typedef struct {
@@ -175,6 +221,8 @@ typedef struct {
     size_t              variable_count;
     ph_filters_t        filters;
     ph_build_config_t   build;
+    ph_deploy_config_t  deploy;
+    ph_serve_manifest_config_t serve;
     ph_op_def_t        *ops;
     size_t              op_count;
     ph_hook_def_t      *hooks;

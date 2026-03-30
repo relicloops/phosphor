@@ -47,6 +47,20 @@ name = "__PROJECT_PUBLIC_DIR__"
 env = "PROJECT_PUBLIC_DIR"
 default = ""
 
+[deploy]
+public_dir = "public/<<name>>.host"
+
+[serve]
+no_redirect = false
+
+[serve.neonsignal]
+port = 9443
+www_root = "public"
+certs_root = "certs"
+
+[serve.redirect]
+port = 9090
+
 [certs]
 output_dir = "certs"
 

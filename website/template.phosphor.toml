@@ -48,6 +48,24 @@ name = "__PHOSPHOR_PUBLIC_DIR__"
 env = "PHOSPHOR_WEBSITE_PUBLIC_DIR"
 default = ""
 
+[deploy]
+public_dir = "public/phosphor.relicloops.local"
+
+[serve]
+
+[serve.neonsignal]
+host = "10.0.0.142"
+port = 5558
+www_root = "public"
+certs_root = "certs"
+augments_dir = "../../neonsignal/build/augments"
+grafts_dir = "../../neonsignal/build/grafts"
+watch = true
+
+[serve.redirect]
+host = "10.0.0.142"
+port = 6668
+
 [certs]
 output_dir = "certs"
 
