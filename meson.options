@@ -1,2 +1,4 @@
 option('script_fallback', type : 'boolean', value : false,
        description : 'Enable shell script fallback for build/clean commands')
+option('dashboard', type : 'boolean', value : true,
+       description : 'Enable ncurses serve dashboard TUI')
