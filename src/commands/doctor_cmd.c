@@ -312,6 +312,8 @@ int ph_cmd_doctor(const ph_cli_config_t *config,
     /* 2. tools */
     warnings += check_tool("openssl");
     check_tool("esbuild");
+    check_tool("neonsignal");
+    check_tool("neonsignal_redirect");
 
     /* 3. node deps */
     warnings += check_node(project_root_abs);
