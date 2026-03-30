@@ -3,15 +3,37 @@
  *
  * Tracks scroll position and updates Table of Contents active state
  * using Intersection Observer API for performance.
+ *
+ * Accepts an optional config to work with any page's TOC structure.
+ * Defaults to the Docs page selectors for backward compatibility.
  */
 
-export const initScrollTracker = () => {
+interface ScrollTrackerConfig {
+  linkSelector: string;
+  sectionSelector: string;
+  activeClass: string;
+  navSelector: string;
+  navOpenClass: string;
+  toggleId: string;
+}
+
+export const initScrollTracker = ( config?: Partial<ScrollTrackerConfig> ) => {
   if ( typeof document === 'undefined' || typeof IntersectionObserver === 'undefined' ) {
     return;
   }
 
-  const tocLinks = document.querySelectorAll( '.docs-toc__link' );
-  const sections = document.querySelectorAll( '.docs__section' );
+  const cfg: ScrollTrackerConfig = {
+    linkSelector: '.docs-toc__link',
+    sectionSelector: '.docs__section',
+    activeClass: 'docs-toc__item--active',
+    navSelector: '.docs-toc__nav',
+    navOpenClass: 'docs-toc__nav--open',
+    toggleId: 'toc-toggle',
+    ...config,
+  };
+
+  const tocLinks = document.querySelectorAll( cfg.linkSelector );
+  const sections = document.querySelectorAll( cfg.sectionSelector );
 
   if ( ! tocLinks.length || ! sections.length ) {
     return;
@@ -28,10 +50,10 @@ export const initScrollTracker = () => {
       }
 
       if ( link.getAttribute( 'href' ) === `#${id}` ) {
-        item.classList.add( 'docs-toc__item--active' );
+        item.classList.add( cfg.activeClass );
       }
       else {
-        item.classList.remove( 'docs-toc__item--active' );
+        item.classList.remove( cfg.activeClass );
       }
     } );
   };
@@ -87,10 +109,10 @@ export const initScrollTracker = () => {
         history.pushState( null, '', href );
 
         /* close mobile ToC */
-        const nav = document.querySelector( '.docs-toc__nav' );
-        const toggle = document.getElementById( 'toc-toggle' );
+        const nav = document.querySelector( cfg.navSelector );
+        const toggle = document.getElementById( cfg.toggleId );
         if ( nav && toggle && window.innerWidth <= 1024 ) {
-          nav.classList.remove( 'docs-toc__nav--open' );
+          nav.classList.remove( cfg.navOpenClass );
           toggle.textContent = '\u25B8'; // ▸
           toggle.setAttribute( 'aria-expanded', 'false' );
         }

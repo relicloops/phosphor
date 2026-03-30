@@ -43,8 +43,8 @@ export const Hero = () => {
           </h1>
           <p class="hero__lead">
             A pure C CLI tool that scaffolds projects from template manifests,
-            builds, cleans, and runs diagnostics for the NeonSignal/Cathode
-            ecosystem.
+            builds, serves, and manages TLS certificates for the
+            relicloops ecosystem.
           </p>
           <div class="hero__actions">
             <a class="hero__cta hero__cta--primary" href="/docs.html">

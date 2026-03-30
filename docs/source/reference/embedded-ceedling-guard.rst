@@ -89,8 +89,8 @@ rules for future edits
      - If the argspecs reference a guarded command, guard them too.
    * - Adding a new ``#include "phosphor/embedded.h"``
      - Ensure the including file is either guarded or excluded from Ceedling.
-   * - Running ``ceedling test:all`` locally and seeing linker errors about
-     ``ph_cmd_glow`` or ``ph_embedded_*``
+   * - Running ``ceedling test:all`` locally and seeing linker errors
+       about ``ph_cmd_glow`` or ``ph_embedded_*``
      - Check that the guards are in place. Do **not** remove the exclusions.
 
 why not just mock it?

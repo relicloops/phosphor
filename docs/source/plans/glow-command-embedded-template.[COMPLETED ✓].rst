@@ -1,8 +1,8 @@
 .. meta::
    :title: glow command -- embedded cathode-landing template
    :tags: #neonsignal, #phosphor
-   :status: active
-   :updated: 2026-03-19
+   :status: completed
+   :updated: 2026-03-29
 
 .. index::
    single: glow command

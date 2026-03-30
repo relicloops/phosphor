@@ -218,7 +218,14 @@ export const AiHistory = () => {
           }
 
           /* initialize scroll tracker */
-          initScrollTracker();
+          initScrollTracker( {
+            linkSelector: '.ai-toc__link',
+            sectionSelector: '.ai-history__section',
+            activeClass: 'ai-toc__item--active',
+            navSelector: '.ai-toc__nav',
+            navOpenClass: 'ai-toc__nav--open',
+            toggleId: 'ai-toc-toggle',
+          } );
         } )
         .catch( () => {
           contentEl.innerHTML = '';

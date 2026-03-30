@@ -89,13 +89,61 @@
   }
 }
 
-/* Light theme -- terminal stays dark */
+/* Light theme */
 [data-theme="light"] .terminal {
-  background: #1e1e2e;
+  background: #e8e8f0;
+}
+
+[data-theme="light"] .terminal__bar {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .terminal__body {
+  color: #1a1a2e;
+}
+
+[data-theme="light"] .terminal__cmd {
+  color: #1a1a2e;
+}
+
+[data-theme="light"] .terminal__prompt {
+  color: var(--uv-violet);
+}
+
+[data-theme="light"] .terminal__comment {
+  color: rgba(26, 26, 46, 0.45);
+}
+
+[data-theme="light"] .terminal__output {
+  color: rgba(26, 26, 46, 0.7);
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) .terminal {
-    background: #1e1e2e;
+    background: #e8e8f0;
+  }
+
+  :root:not([data-theme]) .terminal__bar {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  :root:not([data-theme]) .terminal__body {
+    color: #1a1a2e;
+  }
+
+  :root:not([data-theme]) .terminal__cmd {
+    color: #1a1a2e;
+  }
+
+  :root:not([data-theme]) .terminal__prompt {
+    color: var(--uv-violet);
+  }
+
+  :root:not([data-theme]) .terminal__comment {
+    color: rgba(26, 26, 46, 0.45);
+  }
+
+  :root:not([data-theme]) .terminal__output {
+    color: rgba(26, 26, 46, 0.7);
   }
 }

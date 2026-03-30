@@ -2,7 +2,7 @@
    :title: phosphor project summary
    :tags: #neonsignal, #phosphor
    :status: active
-   :updated: 2026-03-19
+   :updated: 2026-03-30
 
 .. index::
    single: project summary
@@ -21,7 +21,7 @@ visible light. without phosphor, neon tubes produce no usable glow.
 
 CLI contract: ``phosphor create``, ``phosphor build``, ``phosphor clean``,
 ``phosphor rm``, ``phosphor certs``, ``phosphor doctor``, ``phosphor glow``,
-``phosphor version``, ``phosphor help``.
+``phosphor serve``, ``phosphor version``, ``phosphor help``.
 
 
 completed work
@@ -66,10 +66,11 @@ completed work
        definitions in ``commands.h`` / ``phosphor_commands.c``.
        see ``abstract-args-parser-into-generic.rst``
    * - Ceedling test infrastructure
-     - [COMPLETED ✓]
-     - ``project.yml`` configured, ``tests/unit/test_str.c`` (5 smoke
-       tests passing), ``.clangd`` LSP support, CI ``unit-tests`` job
-       runs before build. see ``testing-infrastructure-ceedling.rst``
+     - [REMOVED]
+     - Ceedling 1.0.1 was removed due to brittle ``TEST_SOURCE_FILE()``
+       dependency tracking. 38 test modules archived under
+       ``docs/source/reference/tests/``. setup docs in
+       ``reference/ceedling-test-framework.[SKIP-STALE].rst``
    * - phase 1: core library and parser (9 tasks)
      - [COMPLETED ✓]
      - project scaffold, core primitives (alloc/bytes/str/vec/arena/error/log),
@@ -105,6 +106,30 @@ completed work
      - [COMPLETED ✓]
      - ``reference/process-management.rst`` covering ph_env_t, ph_argv_builder_t,
        ph_proc_exec pipeline, exit code mapping table
+   * - argspec var_name fix
+     - [COMPLETED ✓]
+     - added ``var_name`` field to ``ph_argspec_t`` for flag-to-manifest-variable
+       name mapping. fixes silent drop of ``--description`` and ``--github-url``
+       in ``phosphor glow``. ``var_merge.c`` resolves via argspec lookup
+   * - [deploy] manifest section
+     - [COMPLETED ✓]
+     - ``ph_deploy_config_t`` with ``public_dir`` field. 4-tier deploy path
+       resolution in ``build_cmd.c``: ``--deploy-at`` > ``[deploy]`` >
+       ``[[certs.domains]]`` > ``SNI+TLD`` env. auto-populates
+       ``__*_PUBLIC_DIR__`` build defines
+   * - [serve] manifest section
+     - [COMPLETED ✓]
+     - ``ph_serve_manifest_config_t`` with ``[serve.neonsignal]`` and
+       ``[serve.redirect]`` sub-tables. parsed by ``ph_manifest_load``.
+       3-tier resolution in ``serve_cmd.c``: CLI flag > ``[serve]`` manifest
+       > ``[deploy]``/``[certs]`` derived > built-in defaults
+   * - serve command (reusable library)
+     - [COMPLETED ✓]
+     - ``src/serve/serve.c`` multi-process spawn/wait/stop library.
+       ``src/commands/serve_cmd.c`` CLI layer. spawns neonsignal + redirect
+       as background processes with ``fork``/``setpgid``/``execvp``. SIGTERM
+       forwarding via process groups. manifest guard: skips when no
+       ``[serve]``, ``[deploy]``, or ``[certs]`` in manifest
 
 
 roadmap -- what comes next
@@ -245,9 +270,9 @@ rm command [COMPLETED]
 doctor command [COMPLETED]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- project diagnostics: manifest detection, tool availability (openssl, esbuild),
-  node deps (package.json, node_modules), build state, stale staging dirs,
-  cert status with expiry checking
+- project diagnostics: manifest detection, tool availability (openssl, esbuild,
+  neonsignal, neonsignal_redirect), node deps (package.json, node_modules),
+  build state, stale staging dirs, cert status with expiry checking
 
 code hygiene (v0.0.0-017 polish) [COMPLETED]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -261,6 +286,71 @@ code hygiene (v0.0.0-017 polish) [COMPLETED]
 - 10 base64url unit tests (RFC 4648 vectors, padding edge cases)
 - 16 ACME JSON extraction unit tests
 
+serve command [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- reusable multi-process library: ``src/serve/serve.c`` + ``include/phosphor/serve.h``
+- spawns neonsignal + neonsignal_redirect as background processes
+- ``fork``/``setpgid``/``execvp`` with process group isolation
+- SIGTERM forwarding on Ctrl+C via ``waitpid`` loop
+- manifest ``[serve]`` section with ``[serve.neonsignal]`` and ``[serve.redirect]``
+  sub-tables provides defaults; CLI flags override
+- 3-tier resolution: CLI flag > ``[serve]`` manifest > ``[deploy]``/``[certs]`` derived
+- manifest guard: skips when no config source found
+- 20 CLI flags covering all neonsignal and redirect spin arguments
+- ``phosphor help serve`` auto-generated from argspec descriptions
+- IPv4/IPv6 host address validation (``inet_pton``)
+- privileged port warnings (port < 1024)
+- startup banner with OSC 8 clickable HTTPS URL, bind address, and port
+- ``--watch`` flag + ``[serve.neonsignal] watch`` manifest option: spawns
+  file watcher as third child process (default: ``node scripts/_default/build.mjs --watch``)
+- ncurses dashboard TUI: pipe-captured child output displayed in scrollable
+  panels. color-coded per-process (cyan/green/yellow). keyboard navigation
+  (Tab focus, Up/Down scroll, q quit). auto-layout side-by-side or stacked.
+  SIGWINCH terminal resize support. ``--no-dashboard`` flag to fall back to
+  raw output. compile-time ``-Ddashboard=true`` option
+
+dashboard library [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- reusable ncurses serve dashboard: ``include/phosphor/dashboard.h`` +
+  ``src/dashboard/dashboard.c``
+- ring buffer (2000 lines per panel) with stdout/stderr color differentiation
+- ``poll()``-based event loop: multiplexes pipe fds + signal self-pipe +
+  ncurses keyboard input
+- color pairs: cyan (neonsignal), green (redirect), yellow (watcher), red
+  (stderr), white-on-black status bar
+- SIGWINCH handling via self-pipe trick (async-signal-safe)
+- child process reaping with ``waitpid(WNOHANG)``
+- graceful shutdown: SIGTERM forwarding to process groups on quit
+- vendored ncurses via ``subprojects/ncurses.wrap`` (fallback when system
+  ncurses unavailable)
+
+terminal features library [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- reusable terminal output library: ``include/phosphor/term.h`` + ``src/core/term.c``
+- OSC 8 clickable hyperlinks (``ph_term_link``, ``ph_term_linkf``)
+- labeled key-value output (``ph_term_kv``, ``ph_term_kvf``, ``ph_term_kv_link``)
+- graceful TTY fallback via ``ph_color_enabled()`` -- plain text when redirected
+- used by ``serve_cmd.c`` startup banner
+
+[deploy] manifest section [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``ph_deploy_config_t`` struct with ``public_dir`` field
+- 4-tier deploy path resolution in ``build_cmd.c``:
+  ``--deploy-at`` > ``[deploy]`` > ``[[certs.domains]]`` > ``SNI+TLD`` env
+- auto-populates ``__*_PUBLIC_DIR__`` build defines from resolved path
+
+argspec var_name mapping fix [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- added ``const char *var_name`` field to ``ph_argspec_t``
+- ``var_merge.c`` looks up argspec by ``var_name`` to find the correct CLI
+  flag name, fixing silent drop of ``--description`` and ``--github-url``
+  in glow command where flag names did not match manifest variable names
+
 phase 6: stabilization [DEFERRED -- milestone M4]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -268,22 +358,23 @@ phase 6: stabilization [DEFERRED -- milestone M4]
 - task 2: packaging (Homebrew formula, deb/rpm)
 - task 3: template author documentation and playbook
 
-glow command -- embedded cathode-landing template [ACTIVE ▸]
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+glow command -- embedded cathode-landing template [COMPLETED ✓]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-embed the cathode-landing template (~40 files, ~60 KB) as C static byte arrays
-in the phosphor binary. ``phosphor glow --name <project-name>`` scaffolds a
-Cathode landing page from the embedded template using the existing create
-pipeline. zero external dependencies.
+embedded the cathode-landing template (~40 files, ~60 KB) as C static byte
+arrays in the phosphor binary. ``phosphor glow --name <project-name>`` scaffolds
+a Cathode landing page from the embedded template using the existing create
+pipeline. zero external dependencies. guarded by ``PHOSPHOR_HAS_EMBEDDED``
+compile-time flag.
 
 supersedes ``phase-init/`` (renamed ``init`` to ``glow``).
 
-- task 1: template preparation (verify ``<<placeholder>>`` coverage)
-- task 2: C buffer embedding (code generation, meson custom_target)
-- task 3: glow command implementation (``glow_cmd.c``, virtual source adapter)
-- task 4: tests and cleanup (unit tests, integration test, remove templates/)
+- task 1: template preparation (verify ``<<placeholder>>`` coverage) [DONE]
+- task 2: C buffer embedding (code generation, meson custom_target) [DONE]
+- task 3: glow command implementation (``glow_cmd.c``, virtual source adapter) [DONE]
+- task 4: tests and cleanup [DONE -- note: Ceedling removed, tests archived]
 
-see ``glow-command-embedded-template.[ACTIVE ▸].rst``
+see ``glow-command-embedded-template.[COMPLETED ✓].rst``
 
 embedded build toolchain -- replace esbuild [DRAFT ○ -- milestone 1.0.0-000]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -342,7 +433,7 @@ key technical decisions
 - **build system**: Meson (Ninja backend)
 - **memory**: explicit ownership, arena allocators, ASan/Valgrind verified
 - **dependencies**: toml-c (tier 1), libarchive (tier 1), PCRE2 (tier 1), libgit2 (tier 2, optional)
-- **testing**: Ceedling 1.0.1 (Unity + CMock + CException) -- replaces cmocka/criterion
+- **testing**: removed -- Ceedling 1.0.1 was removed (brittle dependency tracking), waiting for replacement
 - **platforms**: macOS + Linux (Windows deferred)
 - **concurrency**: single-threaded v1 (thread pool deferred to v2)
 - **config format**: ``template.phosphor.toml`` with versioned schema
@@ -366,6 +457,7 @@ plans:
    ├── versioning-and-ci-pipeline.[COMPLETED ✓].rst
    ├── testing-infrastructure-ceedling.[COMPLETED ✓].rst
    ├── code-coverage-infrastructure.[COMPLETED ✓].rst
+   ├── glow-command-embedded-template.[COMPLETED ✓].rst
    ├── soc-audit-json-consolidation.[DRAFT ○].rst
    ├── phase-0/
    │   ├── index.[COMPLETED ✓].rst

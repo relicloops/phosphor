@@ -7,7 +7,7 @@
 [![Status](https://img.shields.io/badge/status-not%20production%20ready-red.svg)]()
 
 a pure C CLI tool for the relicloops ecosystem. scaffolds projects from
-TOML template manifests, builds, cleans, generates TLS certificates, and
+TOML template manifests, builds, serves, generates TLS certificates, and
 runs diagnostics.
 
 the name references the phosphor coating inside neon tubes -- the layer that
@@ -19,6 +19,7 @@ no usable glow.
 phosphor create   -- scaffold a new project from a template manifest
 phosphor glow     -- scaffold a Cathode landing page from embedded template
 phosphor build    -- bundle and deploy a Cathode JSX project via esbuild
+phosphor serve    -- start neonsignal HTTPS server with optional HTTP redirect
 phosphor clean    -- remove build artifacts and stale staging directories
 phosphor rm       -- remove a specific path within the project root
 phosphor certs    -- generate TLS certificates (local CA or Let's Encrypt ACME)
@@ -71,32 +72,24 @@ meson setup build -Dlibgit2=false -Dlibarchive=false -Dpcre2=false
 ninja -C build
 ```
 
+**Serving**
+
+start the neonsignal HTTPS dev server for the current project:
+
+```bash
+phosphor serve
+```
+
+shows an ncurses dashboard with scrollable panels for each process (neonsignal,
+redirect, watcher). reads defaults from the `[serve]` manifest section; CLI
+flags override. use `--no-dashboard` for raw output. requires `neonsignal`
+and optionally `neonsignal_redirect` on PATH.
+
 **Testing**
 
-phosphor uses [Ceedling](https://github.com/ThrowTheSwitch/Ceedling) 1.0.1
-(Unity + CMock) for unit and integration tests.
-
-prerequisites:
-- Ruby 3+
-- Ceedling: `gem install ceedling`
-
-```bash
-# run all tests
-ceedling test:all
-
-# run a single module test
-ceedling test:test_kvp
-
-# clean test build artifacts
-ceedling clobber
-```
-
-integration tests:
-
-```bash
-sh tests/integration/test_create_golden.sh ./build/phosphor
-sh tests/integration/test_glow_golden.sh ./build/phosphor
-```
+the test framework (Ceedling 1.0.1) was removed. 38 test modules are
+archived under `docs/source/reference/tests/`. a replacement framework
+is pending.
 
 **Template sources**
 
@@ -143,9 +136,11 @@ vendored (built automatically, fetched by meson wrap):
 - `libgit2` v1.9.2 -- remote git template fetching (`-Dlibgit2=true`, default on)
 - `libarchive` v3.8.5 -- archive template support (`-Dlibarchive=true`, default on)
 - `PCRE2` v10.45 -- regex filters in template manifests (`-Dpcre2=true`, default on)
+- `libcurl` -- ACME HTTP-01 certificate requests (`-Dlibcurl=true`, default on)
 
-testing:
-- Ruby 3+ and Ceedling 1.0.1 (Unity + CMock + CException)
+runtime (optional, for `phosphor serve`):
+- `neonsignal` -- HTTPS server binary (on PATH)
+- `neonsignal_redirect` -- HTTP-to-HTTPS redirect binary (on PATH)
 
 documentation:
 - Sphinx (Python)
@@ -166,31 +161,6 @@ documentation workflows. install just, then run `just` to see available recipes.
 prerequisites:
 - [just](https://github.com/casey/just) 1.0+
 
-```text
-Build recipes:
-  setup              configure build directory with meson
-  build              compile with ninja
-  smoke-test         build and run version test
-  clean              clean build artifacts (ninja + ceedling)
-  rebuild            clean then build
-
-Testing recipes:
-  test               run all unit tests (ceedling)
-  test-module MODULE run specific test module (e.g., test_kvp)
-  integration        run integration tests
-  coverage           run tests with coverage report
-  coverage-open      run coverage and open HTML report
-  coverage-docs      clobber, gcov, copy report to docs/
-
-Documentation & misc:
-  docs               build Sphinx documentation
-  changelog          regenerate CHANGELOG.md from git commits
-  version            display phosphor version
-
-Complete workflows:
-  all                clean -> setup -> build -> test
-```
-
 ```bash
 # list recipes
 just
@@ -198,14 +168,8 @@ just
 # configure + compile
 just setup && just build
 
-# run all tests
-just test
-
-# run a single test module
-just test-module test_kvp
-
-# full workflow
-just all
+# smoke test
+just smoke-test
 ```
 
 **Website**

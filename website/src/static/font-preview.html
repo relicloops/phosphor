@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Font Preview -- relicloops ecosystem</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Syncopate:wght@400;700&family=Audiowide&family=Rajdhani:wght@300;400;500;600;700&family=Exo+2:wght@300;400;700&family=Michroma&family=Oxanium:wght@300;400;600;700&family=Electrolize&family=Chakra+Petch:wght@300;400;500;600;700&family=Major+Mono+Display&family=Press+Start+2P&family=Silkscreen&family=DM+Mono:wght@300;400;500&family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;600;700&family=Syne:wght@400;500;600;700;800&family=Unbounded:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --phosphor-green: #39ff14;
+      --uv-violet: #7b2ff7;
+      --void-black: #0a0a0f;
+      --void-deep: #050508;
+      --void-light: #12121a;
+      --text-primary: #e0e0f0;
+      --text-dim: rgba(224, 224, 240, 0.5);
+      --neon-cyan: #00ffff;
+      --neon-pink: #ff006e;
+      --border-subtle: rgba(224, 224, 240, 0.08);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--void-black);
+      color: var(--text-primary);
+      font-family: 'Share Tech Mono', monospace;
+      padding: 2rem;
+    }
+    h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--phosphor-green);
+      margin-bottom: 0.5rem;
+    }
+    .subtitle {
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      margin-bottom: 2.5rem;
+      letter-spacing: 0.05em;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    .card {
+      background: var(--void-light);
+      border: 1px solid var(--border-subtle);
+      padding: 1.5rem;
+      border-radius: 4px;
+      transition: border-color 0.2s;
+    }
+    .card:hover {
+      border-color: var(--phosphor-green);
+    }
+    .card__number {
+      font-family: 'Syncopate', sans-serif;
+      font-size: 0.55rem;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: var(--text-dim);
+      margin-bottom: 0.75rem;
+    }
+    .card__sample {
+      margin-bottom: 0.75rem;
+      line-height: 1.2;
+    }
+    .card__sample--lg {
+      font-size: 1.4rem;
+    }
+    .card__sample--sm {
+      font-size: 0.85rem;
+      margin-top: 0.4rem;
+    }
+    .card__font-name {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--neon-cyan);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .card__notes {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.6rem;
+      color: var(--text-dim);
+      margin-top: 0.3rem;
+    }
+    .sep {
+      color: var(--phosphor-green);
+      opacity: 0.6;
+    }
+    .dim { opacity: 0.5; }
+    .glow { text-shadow: 0 0 12px rgba(57, 255, 20, 0.4); }
+    .glow-violet { text-shadow: 0 0 12px rgba(123, 47, 247, 0.4); }
+  </style>
+</head>
+<body>
+
+<h1>Eyebrow Font Preview</h1>
+<p class="subtitle">Candidates for the "relicloops ecosystem" branding component</p>
+
+<div class="grid">
+
+  <!-- 1. Orbitron (already used for headings) -->
+  <div class="card">
+    <p class="card__number">01 -- already in use</p>
+    <div class="card__sample card__sample--lg" style="font-family:'Orbitron',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Orbitron',sans-serif;font-weight:400;text-transform:uppercase;letter-spacing:0.12em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Orbitron 700 + 400</p>
+    <p class="card__notes">geometric, techy, already the heading font</p>
+  </div>
+
+  <!-- 2. Syncopate (already used for labels) -->
+  <div class="card">
+    <p class="card__number">02 -- already in use</p>
+    <div class="card__sample card__sample--lg" style="font-family:'Syncopate',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Syncopate',sans-serif;font-weight:400;text-transform:uppercase;letter-spacing:0.15em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Syncopate 700 + 400</p>
+    <p class="card__notes">wide, brutalist, currently the label font</p>
+  </div>
+
+  <!-- 3. Audiowide (already loaded for hero title) -->
+  <div class="card">
+    <p class="card__number">03 -- already loaded</p>
+    <div class="card__sample card__sample--lg" style="font-family:'Audiowide',sans-serif;letter-spacing:0.06em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Audiowide',sans-serif;letter-spacing:0.06em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Audiowide 400</p>
+    <p class="card__notes">rounded futuristic, hero title font</p>
+  </div>
+
+  <!-- 4. Share Tech Mono (already body font) -->
+  <div class="card">
+    <p class="card__number">04 -- already in use</p>
+    <div class="card__sample card__sample--lg" style="font-family:'Share Tech Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Share Tech Mono',monospace;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Share Tech Mono 400</p>
+    <p class="card__notes">monospaced terminal vibe, the body font</p>
+  </div>
+
+  <!-- 5. Michroma (new) -->
+  <div class="card">
+    <p class="card__number">05 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Michroma',sans-serif;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Michroma',sans-serif;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Michroma 400</p>
+    <p class="card__notes">clean geometric, great for branding, compact</p>
+  </div>
+
+  <!-- 6. Oxanium (new) -->
+  <div class="card">
+    <p class="card__number">06 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Oxanium',sans-serif;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Oxanium',sans-serif;font-weight:300;text-transform:uppercase;letter-spacing:0.08em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Oxanium 600 + 300</p>
+    <p class="card__notes">rounded tech, gaming/HUD feel, multiple weights</p>
+  </div>
+
+  <!-- 7. Electrolize (new) -->
+  <div class="card">
+    <p class="card__number">07 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Electrolize',sans-serif;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Electrolize',sans-serif;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Electrolize 400</p>
+    <p class="card__notes">sharp digital, single weight, neon-sign fit</p>
+  </div>
+
+  <!-- 8. Chakra Petch (new) -->
+  <div class="card">
+    <p class="card__number">08 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Chakra Petch',sans-serif;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Chakra Petch',sans-serif;font-weight:300;text-transform:uppercase;letter-spacing:0.08em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Chakra Petch 600 + 300</p>
+    <p class="card__notes">angular, cyberpunk, excellent weight range</p>
+  </div>
+
+  <!-- 9. Rajdhani (new) -->
+  <div class="card">
+    <p class="card__number">09 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Rajdhani',sans-serif;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Rajdhani',sans-serif;font-weight:300;text-transform:uppercase;letter-spacing:0.12em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Rajdhani 600 + 300</p>
+    <p class="card__notes">condensed, technical, light weight is elegant</p>
+  </div>
+
+  <!-- 10. Exo 2 (new) -->
+  <div class="card">
+    <p class="card__number">10 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Exo 2',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Exo 2',sans-serif;font-weight:300;text-transform:uppercase;letter-spacing:0.1em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Exo 2 700 + 300</p>
+    <p class="card__notes">versatile geometric, very readable, sci-fi</p>
+  </div>
+
+  <!-- 11. Major Mono Display (new) -->
+  <div class="card">
+    <p class="card__number">11 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Major Mono Display',monospace;letter-spacing:0.06em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Major Mono Display',monospace;letter-spacing:0.06em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Major Mono Display 400</p>
+    <p class="card__notes">experimental mono, mixed case glyphs, bold statement</p>
+  </div>
+
+  <!-- 12. Syne (new) -->
+  <div class="card">
+    <p class="card__number">12 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Syne',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Syne',sans-serif;font-weight:400;text-transform:uppercase;letter-spacing:0.08em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Syne 700 + 400</p>
+    <p class="card__notes">quirky geometric, personality without being loud</p>
+  </div>
+
+  <!-- 13. Unbounded (new) -->
+  <div class="card">
+    <p class="card__number">13 -- new font</p>
+    <div class="card__sample card__sample--lg glow-violet" style="font-family:'Unbounded',sans-serif;font-weight:500;text-transform:uppercase;letter-spacing:0.06em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Unbounded',sans-serif;font-weight:300;text-transform:uppercase;letter-spacing:0.06em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Unbounded 500 + 300</p>
+    <p class="card__notes">rounded bold, modern brand feel, wide range</p>
+  </div>
+
+  <!-- 14. Outfit (new) -->
+  <div class="card">
+    <p class="card__number">14 -- new font</p>
+    <div class="card__sample card__sample--lg glow" style="font-family:'Outfit',sans-serif;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;">
+      relicloops <span class="sep">/</span> <span class="dim">ecosystem</span>
+    </div>
+    <div class="card__sample card__sample--sm" style="font-family:'Outfit',sans-serif;font-weight:300;text-transform:uppercase;letter-spacing:0.12em;">
+      relicloops <span class="sep">&#x00B7;</span> ecosystem
+    </div>
+    <p class="card__font-name">Outfit 600 + 300</p>
+    <p class="card__notes">clean, neutral geometric, very modern</p>
+  </div>
+
+</div>
+
+</body>
+</html>

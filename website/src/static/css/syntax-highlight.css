@@ -7,3 +7,24 @@
 .hl--bracket     { color: #f9e2af; }
 .hl--punctuation { color: #7f849c; }
 .hl--comment     { color: rgba(224, 224, 240, 0.45); }
+
+/* Light theme -- darker token colors for light backgrounds */
+[data-theme="light"] .hl--string      { color: #1a7a1a; }
+[data-theme="light"] .hl--number      { color: #6b3fa0; }
+[data-theme="light"] .hl--boolean     { color: #b45309; }
+[data-theme="light"] .hl--keyword     { color: #0969a8; }
+[data-theme="light"] .hl--operator    { color: #3b3f51; }
+[data-theme="light"] .hl--bracket     { color: #8a6d1b; }
+[data-theme="light"] .hl--punctuation { color: #5c5f72; }
+[data-theme="light"] .hl--comment     { color: rgba(26, 26, 46, 0.45); }
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .hl--string      { color: #1a7a1a; }
+  :root:not([data-theme]) .hl--number      { color: #6b3fa0; }
+  :root:not([data-theme]) .hl--boolean     { color: #b45309; }
+  :root:not([data-theme]) .hl--keyword     { color: #0969a8; }
+  :root:not([data-theme]) .hl--operator    { color: #3b3f51; }
+  :root:not([data-theme]) .hl--bracket     { color: #8a6d1b; }
+  :root:not([data-theme]) .hl--punctuation { color: #5c5f72; }
+  :root:not([data-theme]) .hl--comment     { color: rgba(26, 26, 46, 0.45); }
+}

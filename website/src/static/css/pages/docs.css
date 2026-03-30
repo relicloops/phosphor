@@ -225,11 +225,11 @@
 }
 
 [data-theme="light"] .docs__section-body pre {
-  background: #1e1e2e;
+  background: #e8e8f0;
 }
 
 [data-theme="light"] .docs__section-body pre code {
-  color: #e0e0f0;
+  color: #1a1a2e;
 }
 
 @media (prefers-color-scheme: light) {
@@ -239,10 +239,10 @@
   }
 
   :root:not([data-theme]) .docs__section-body pre {
-    background: #1e1e2e;
+    background: #e8e8f0;
   }
 
   :root:not([data-theme]) .docs__section-body pre code {
-    color: #e0e0f0;
+    color: #1a1a2e;
   }
 }

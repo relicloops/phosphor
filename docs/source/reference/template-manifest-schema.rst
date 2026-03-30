@@ -190,6 +190,151 @@ Array of tables. each entry declares a build-time define injected via
      - no
      - Fallback value if ``env`` is unset or empty.
 
+[deploy] -- deploy configuration
+---------------------------------
+
+Optional. declares the deploy target directory for ``phosphor build`` and
+provides derived defaults for ``phosphor serve``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 60
+
+   * - Key
+     - Type
+     - Required
+     - Description
+   * - ``public_dir``
+     - string
+     - no
+     - Relative deploy path (e.g. ``"public/mysite.host"``). Used by build
+       command tier-2 resolution and by serve command to derive ``--www-root``
+       via ``dirname(public_dir)``.
+
+[serve] -- serve configuration
+-------------------------------
+
+Optional. declares defaults for ``phosphor serve``. all values are overridden
+by CLI flags when present. the serve command resolves each setting in order:
+CLI flag > ``[serve]`` manifest > ``[deploy]``/``[certs]`` derived > built-in
+default.
+
+Top-level keys:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 60
+
+   * - Key
+     - Type
+     - Required
+     - Description
+   * - ``no_redirect``
+     - boolean
+     - no
+     - Skip launching the HTTP->HTTPS redirect service. Default: false.
+
+[serve.neonsignal] -- neonsignal process defaults
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 60
+
+   * - Key
+     - Type
+     - Required
+     - Description
+   * - ``bin``
+     - string
+     - no
+     - Path to neonsignal binary. Default: search PATH.
+   * - ``threads``
+     - integer
+     - no
+     - Worker thread count. Default: 3.
+   * - ``host``
+     - string
+     - no
+     - Bind address. Default: ``0.0.0.0``.
+   * - ``port``
+     - integer
+     - no
+     - HTTPS listen port. Default: 9443.
+   * - ``www_root``
+     - string
+     - no
+     - Static files root. Default: derived from ``[deploy]`` or ``"public"``.
+   * - ``certs_root``
+     - string
+     - no
+     - TLS certs directory. Default: from ``[certs].output_dir`` or ``"certs"``.
+   * - ``working_dir``
+     - string
+     - no
+     - Working directory for path resolution.
+   * - ``upload_dir``
+     - string
+     - no
+     - Upload directory override.
+   * - ``augments_dir``
+     - string
+     - no
+     - API augments directory.
+   * - ``grafts_dir``
+     - string
+     - no
+     - Grafts directory.
+   * - ``watch``
+     - boolean
+     - no
+     - Start file watcher alongside server. Default: false.
+   * - ``watch_cmd``
+     - string
+     - no
+     - Shell command for watch process. Default:
+       ``node scripts/_default/build.mjs --watch``.
+
+[serve.redirect] -- redirect process defaults
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 60
+
+   * - Key
+     - Type
+     - Required
+     - Description
+   * - ``bin``
+     - string
+     - no
+     - Path to neonsignal_redirect binary. Default: search PATH.
+   * - ``instances``
+     - integer
+     - no
+     - Worker instances. Default: 2.
+   * - ``host``
+     - string
+     - no
+     - Bind address. Default: ``0.0.0.0``.
+   * - ``port``
+     - integer
+     - no
+     - HTTP listen port. Default: 9090.
+   * - ``target_port``
+     - integer
+     - no
+     - HTTPS target port for redirection. Default: neonsignal port.
+   * - ``acme_webroot``
+     - string
+     - no
+     - ACME webroot directory for HTTP-01 challenges.
+   * - ``working_dir``
+     - string
+     - no
+     - Working directory for path resolution.
+
 [[ops]] -- operations
 ---------------------
 
@@ -418,6 +563,21 @@ example manifest
    name = "__PROJECT_PUBLIC_DIR__"
    env = "PROJECT_PUBLIC_DIR"
    default = ""
+
+   [deploy]
+   public_dir = "public/<<project_name>>.host"
+
+   [serve]
+   no_redirect = false
+
+   [serve.neonsignal]
+   port = 9443
+   www_root = "public"
+   certs_root = "certs"
+
+   [serve.redirect]
+   port = 9090
+   target_port = 9443
 
    [[ops]]
    id = "create-root"

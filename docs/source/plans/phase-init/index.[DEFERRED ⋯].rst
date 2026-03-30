@@ -13,7 +13,7 @@ phase init -- init command
 
 .. note::
 
-   superseded by ``glow-command-embedded-template.[ACTIVE ▸].rst``. the ``init``
+   superseded by ``glow-command-embedded-template.[COMPLETED ✓].rst``. the ``init``
    command described here was implemented as ``glow`` instead. these task files
    remain as historical reference.
 

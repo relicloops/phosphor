@@ -8,16 +8,40 @@ const FEATURES = [
     usage: 'phosphor create --name=my-app --template=./tpl',
   },
   {
+    icon: '\u2727', // white four pointed star
+    name: 'glow',
+    desc: 'Scaffold a Cathode landing page from the embedded template. Zero external deps -- the template is compiled into the binary.',
+    usage: 'phosphor glow --name=my-site',
+  },
+  {
     icon: '\u25B8', // ▸
     name: 'build',
-    desc: 'Compile and bundle projects via spawned child processes. Exit codes map cleanly to phosphor diagnostics.',
+    desc: 'Bundle Cathode JSX projects via esbuild. Deploy path resolved from manifest [deploy], [certs], or CLI flags.',
     usage: 'phosphor build --project=./my-app',
+  },
+  {
+    icon: '\u2197', // north east arrow
+    name: 'serve',
+    desc: 'Start neonsignal HTTPS + redirect servers. Config from [serve] manifest, CLI flags override. Ctrl+C stops both.',
+    usage: 'phosphor serve --project=./my-app',
   },
   {
     icon: '\u00D7', // x
     name: 'clean',
     desc: 'Remove build artifacts and staging directories. Supports dry-run mode to preview what would be deleted.',
     usage: 'phosphor clean --dry-run',
+  },
+  {
+    icon: '\u2212', // minus
+    name: 'rm',
+    desc: 'Remove a specific path within the project root. Path traversal prevention and manifest guard built in.',
+    usage: 'phosphor rm --specific=build/stale-dir',
+  },
+  {
+    icon: '\u26BF', // key
+    name: 'certs',
+    desc: 'Generate TLS certificates. Local self-signed CA for dev, Let\'s Encrypt ACME HTTP-01 for production.',
+    usage: 'phosphor certs --generate',
   },
   {
     icon: '\u2713', // checkmark

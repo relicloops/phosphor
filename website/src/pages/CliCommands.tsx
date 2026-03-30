@@ -3,6 +3,7 @@ import { css } from '@relicloops/cathode';
 import { BackToTop } from '../components/BackToTop';
 import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
+import { initScrollTracker } from '../scripts/scroll-tracker';
 
 interface FlagDef {
   name: string;
@@ -104,13 +105,57 @@ const commands: CommandDef[] = [
     ],
   },
   {
+    name: 'glow',
+    description: 'Scaffold a Cathode landing page from the embedded template. Zero external dependencies -- the template is compiled into the phosphor binary.',
+    usage: 'phosphor glow --name=<project-name>',
+    flags: [
+      { name: 'name', syntax: '--name=<string>', description: 'Project name; used as the destination folder and passed to template variables.', annotation: 'required' },
+      { name: 'output', syntax: '--output=<path>', description: 'Custom output directory. When set, overrides --name for the destination folder.' },
+      { name: 'description', syntax: '--description=<string>', description: 'Project description passed to template variables.', annotation: 'default: A Cathode JSX website' },
+      { name: 'github-url', syntax: '--github-url=<url>', description: 'GitHub URL passed to template variables.', annotation: 'default: https://github.com' },
+      { name: 'force', syntax: '--force', description: 'Overwrite existing destination files without prompting.' },
+      { name: 'dry-run', syntax: '--dry-run', description: 'Print planned operations without creating any files.' },
+      { name: 'verbose', syntax: '--verbose', description: 'Enable verbose output during scaffolding.' },
+    ],
+  },
+  {
+    name: 'serve',
+    description: 'Start the neonsignal HTTPS dev server (and optionally the HTTP redirect service and file watcher) for the project. Displays an ncurses dashboard showing output from all processes. Reads defaults from the [serve] manifest section; CLI flags override.',
+    usage: 'phosphor serve [--project=<path>]',
+    flags: [
+      { name: 'project', syntax: '--project=<path>', description: 'Project root directory. Defaults to the current working directory.' },
+      { name: 'verbose', syntax: '--verbose', description: 'Enable debug-level logging.' },
+      { name: 'neonsignal-bin', syntax: '--neonsignal-bin=<path>', description: 'Path to the neonsignal binary. Default: search PATH.' },
+      { name: 'redirect-bin', syntax: '--redirect-bin=<path>', description: 'Path to the neonsignal_redirect binary. Default: search PATH.' },
+      { name: 'no-redirect', syntax: '--no-redirect', description: 'Skip launching the HTTP->HTTPS redirect service.' },
+      { name: 'threads', syntax: '--threads=<int>', description: 'Neonsignal worker threads.', annotation: 'default: 3' },
+      { name: 'host', syntax: '--host=<string>', description: 'Neonsignal bind address.', annotation: 'default: 0.0.0.0' },
+      { name: 'port', syntax: '--port=<int>', description: 'Neonsignal HTTPS listen port.', annotation: 'default: 9443' },
+      { name: 'www-root', syntax: '--www-root=<path>', description: 'Static files root directory. Resolved from [serve] > [deploy] > "public".' },
+      { name: 'certs-root', syntax: '--certs-root=<path>', description: 'TLS certificates directory. Resolved from [serve] > [certs] > "certs".' },
+      { name: 'working-dir', syntax: '--working-dir=<path>', description: 'Neonsignal working directory for resolving relative paths.' },
+      { name: 'upload-dir', syntax: '--upload-dir=<path>', description: 'Neonsignal upload directory override.' },
+      { name: 'augments-dir', syntax: '--augments-dir=<path>', description: 'Neonsignal API augments directory.' },
+      { name: 'grafts-dir', syntax: '--grafts-dir=<path>', description: 'Neonsignal grafts directory.' },
+      { name: 'watch', syntax: '--watch', description: 'Start a file watcher alongside neonsignal that rebuilds on source changes.' },
+      { name: 'watch-cmd', syntax: '--watch-cmd=<string>', description: 'Custom watch command. Default: node scripts/_default/build.mjs --watch.' },
+      { name: 'no-dashboard', syntax: '--no-dashboard', description: 'Disable ncurses dashboard; show raw process output.' },
+      { name: 'redirect-instances', syntax: '--redirect-instances=<int>', description: 'Redirect service worker instances.', annotation: 'default: 2' },
+      { name: 'redirect-host', syntax: '--redirect-host=<string>', description: 'Redirect bind address.', annotation: 'default: 0.0.0.0' },
+      { name: 'redirect-port', syntax: '--redirect-port=<int>', description: 'Redirect HTTP listen port.', annotation: 'default: 9090' },
+      { name: 'redirect-target-port', syntax: '--redirect-target-port=<int>', description: 'Redirect HTTPS target port. Defaults to the neonsignal port.' },
+      { name: 'redirect-acme-webroot', syntax: '--redirect-acme-webroot=<path>', description: 'Redirect ACME webroot directory for HTTP-01 challenges.' },
+      { name: 'redirect-working-dir', syntax: '--redirect-working-dir=<path>', description: 'Redirect working directory for resolving relative paths.' },
+    ],
+  },
+  {
     name: 'doctor',
-    description: 'Run project diagnostics. Not yet implemented.',
+    description: 'Run project diagnostics: manifest detection, tool availability (openssl, esbuild, neonsignal, neonsignal_redirect), node deps, build state, stale staging dirs, cert status.',
     usage: 'phosphor doctor [--project=<path>]',
     flags: [
-      { name: 'project', syntax: '--project=<path>', description: 'Project root directory. Not yet implemented.' },
-      { name: 'verbose', syntax: '--verbose', description: 'Enable verbose output. Not yet implemented.' },
-      { name: 'toml', syntax: '--toml', description: 'Output diagnostic report in TOML format. Not yet implemented.' },
+      { name: 'project', syntax: '--project=<path>', description: 'Project root directory. Defaults to the current working directory.' },
+      { name: 'verbose', syntax: '--verbose', description: 'Enable verbose output.' },
+      { name: 'toml', syntax: '--toml', description: 'Output diagnostic report in TOML format.' },
     ],
   },
   {
@@ -165,6 +210,33 @@ export const CliCommands = () => {
   css( './css/theme.css' );
   css( './css/pages/cli-commands.css' );
 
+  if ( typeof document !== 'undefined' ) {
+    /* defer to next tick so JSX is rendered first */
+    setTimeout( () => {
+      initScrollTracker( {
+        linkSelector: '.cli-ref__toc-link',
+        sectionSelector: '.cli-cmd__section',
+        activeClass: 'cli-ref__toc-item--active',
+        navSelector: '.cli-ref__toc-nav',
+        navOpenClass: 'cli-ref__toc-nav--open',
+        toggleId: 'cli-toc-toggle',
+      } );
+    }, 0 );
+
+    /* mobile ToC toggle */
+    document.addEventListener( 'click', ( e: MouseEvent ) => {
+      const target = e.target as HTMLElement;
+      if ( target && target.id === 'cli-toc-toggle' ) {
+        const nav = document.querySelector( '.cli-ref__toc-nav' );
+        if ( nav ) {
+          const isOpen = nav.classList.toggle( 'cli-ref__toc-nav--open' );
+          target.textContent = isOpen ? '\u25BE' : '\u25B8';
+          target.setAttribute( 'aria-expanded', String( isOpen ) );
+        }
+      }
+    } );
+  }
+
   return (
     <>
       <Header />
@@ -172,10 +244,19 @@ export const CliCommands = () => {
 
         <aside class="cli-ref__toc" aria-label="Command list">
           <h2 class="cli-ref__toc-title">Commands</h2>
-          <nav>
+          <button
+            id="cli-toc-toggle"
+            class="cli-ref__toc-toggle"
+            type="button"
+            aria-label="Toggle command list"
+            aria-expanded="false"
+          >
+            &#x25B8;
+          </button>
+          <nav class="cli-ref__toc-nav" aria-label="Command sections">
             <ul class="cli-ref__toc-list">
               {commands.map( cmd => (
-                <li>
+                <li class="cli-ref__toc-item">
                   <a href={`#${cmd.name}`} class="cli-ref__toc-link">{cmd.name}</a>
                 </li>
               ) )}

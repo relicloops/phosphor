@@ -123,6 +123,31 @@ const TOML_LINES: TerminalLine[] = [
   { type: 'output', text: 'default = "/public"' },
   { type: 'blank' },
 
+  /* ---- [deploy] -- deploy target ---- */
+  { type: 'comment', text: '# [deploy] -- deploy target directory for phosphor build / serve' },
+  { type: 'output', text: '[deploy]' },
+  { type: 'output', text: 'public_dir = "public/<<project_name>>.host"' },
+  { type: 'blank' },
+
+  /* ---- [serve] -- dev server configuration ---- */
+  { type: 'comment', text: '# [serve] -- neonsignal dev server defaults (overridden by CLI flags)' },
+  { type: 'output', text: '[serve]' },
+  { type: 'output', text: 'no_redirect = false' },
+  { type: 'blank' },
+
+  { type: 'output', text: '[serve.neonsignal]' },
+  { type: 'output', text: 'threads = 3' },
+  { type: 'output', text: 'port = 9443' },
+  { type: 'output', text: 'www_root = "public"' },
+  { type: 'output', text: 'certs_root = "certs"' },
+  { type: 'blank' },
+
+  { type: 'output', text: '[serve.redirect]' },
+  { type: 'output', text: 'instances = 2' },
+  { type: 'output', text: 'port = 9090' },
+  { type: 'output', text: 'target_port = 9443' },
+  { type: 'blank' },
+
   /* ---- [certs] -- TLS certificate generation ---- */
   { type: 'comment', text: '# [certs] -- TLS certificate generation (local CA + Let\'s Encrypt)' },
   { type: 'output', text: '[certs]' },
@@ -217,6 +242,7 @@ const TOML_HIGHLIGHT: HighlightConfig = {
   keywords: [
     'manifest', 'template', 'variables', 'filters',
     'ops', 'hooks', 'defaults', 'build', 'defines',
+    'deploy', 'serve', 'neonsignal', 'redirect',
     'certs', 'domains',
   ],
   lineComment: '#',

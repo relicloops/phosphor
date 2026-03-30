@@ -45,7 +45,7 @@ overview documents and per-phase task breakdowns for the phosphor project.
    :maxdepth: 1
    :caption: feature plans
 
-   glow-command-embedded-template.[ACTIVE ▸]
+   glow-command-embedded-template.[COMPLETED ✓]
    verbose-flag-implementation.[DRAFT ○]
    embedded-build-toolchain.[DRAFT ○]
    soc-audit-json-consolidation.[DRAFT ○]
