@@ -5,6 +5,7 @@
 #  define SIGWINCH 28
 #endif
 
+#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -57,6 +58,11 @@ void ph_signal_install_winch(void) {
 int ph_signal_pipe_init(void) {
     if (g_signal_pipe[0] >= 0) return g_signal_pipe[0];
     if (pipe(g_signal_pipe) < 0) return -1;
+    /* non-blocking so drain() never stalls the event loop */
+    fcntl(g_signal_pipe[0], F_SETFL,
+          fcntl(g_signal_pipe[0], F_GETFL) | O_NONBLOCK);
+    fcntl(g_signal_pipe[1], F_SETFL,
+          fcntl(g_signal_pipe[1], F_GETFL) | O_NONBLOCK);
     return g_signal_pipe[0];
 }
 

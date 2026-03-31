@@ -708,23 +708,28 @@ int ph_dashboard_run(ph_dashboard_t *db) {
         }
 
         int pr = poll(fds, (nfds_t)nfds, POLL_TIMEOUT_MS);
-        (void)pr;
 
-        /* handle signal pipe */
-        if (sig_idx >= 0 && (fds[sig_idx].revents & POLLIN)) {
+        /* drain signal pipe (non-blocking) */
+        if (sig_idx >= 0 && (pr > 0 && (fds[sig_idx].revents & POLLIN)))
             ph_signal_pipe_drain();
 
-            if (ph_signal_interrupted()) {
-                db->quit = true;
-                continue;
-            }
+        /* check signal flags -- always, because poll may return EINTR
+         * on SIGWINCH/SIGINT without setting revents */
+        if (pr == -1 && errno == EINTR)
+            ph_signal_pipe_drain();
 
-            if (ph_signal_winch_pending()) {
-                ph_signal_winch_clear();
-                endwin();
-                refresh();
-                layout_panels(db);
-            }
+        if (ph_signal_interrupted()) {
+            db->quit = true;
+            continue;
+        }
+
+        if (ph_signal_winch_pending()) {
+            ph_signal_winch_clear();
+            endwin();
+            refresh();
+            layout_panels(db);
+            draw_all(db);
+            continue;
         }
 
         /* read pipe data */
