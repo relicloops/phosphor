@@ -243,6 +243,14 @@ static const ph_argspec_t serve_specs[] = {
      "redirect working directory for resolving paths"},
 };
 
+/*
+ * Filament command -- open a file in the filament editor
+ */
+static const ph_argspec_t filament_specs[] = {
+    {"path", PH_TYPE_PATH, PH_FORM_VALUED, true, NULL, NULL, 0,
+     "file to open in filament (absolute or relative path)"},
+};
+
 /* version and help have no flags (appendix E) */
 
 /* ---- command table ---- */
@@ -266,6 +274,8 @@ static const ph_cmd_def_t phosphor_commands[] = {
 #endif
     {"serve", PHOSPHOR_CMD_SERVE, serve_specs, ARRAY_LEN(serve_specs),
      false, "start neonsignal dev server for the project"},
+    {"filament", PHOSPHOR_CMD_FILAMENT, filament_specs, ARRAY_LEN(filament_specs),
+     false, "open a file in the filament editor"},
     {"version", PHOSPHOR_CMD_VERSION, NULL, 0, false,
      "print phosphor version"},
     {"help", PHOSPHOR_CMD_HELP, NULL, 0, true,

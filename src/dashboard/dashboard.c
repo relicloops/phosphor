@@ -233,6 +233,12 @@ struct ph_dashboard {
     int                      info_count;
     ph_dashboard_info_line_t info_lines[PH_DASHBOARD_MAX_INFO_LINES];
     WINDOW                  *info_win;
+    /* command line */
+    bool  cmd_active;
+    char  cmd_buf[256];
+    int   cmd_len;
+    char  cmd_msg[256];
+    int   cmd_msg_frames;
 };
 
 /* ---- ANSI color rendering ---- */
@@ -507,13 +513,34 @@ static void draw_status_bar(ph_dashboard_t *db) {
 
     attron(COLOR_PAIR(CP_STATUSBAR));
 
-    if (db->status_text)
-        mvprintw(rows - 1, 1, "%s", db->status_text);
+    if (db->cmd_active) {
+        /* command entry: ":" + buffer text */
+        mvprintw(rows - 1, 0, ":%.*s", db->cmd_len, db->cmd_buf);
 
-    const char *keys = "q:quit  Tab:focus  Up/Down:scroll  Home/End:top/btm";
-    int klen = (int)strlen(keys);
-    if (cols - klen - 2 > 0)
-        mvprintw(rows - 1, cols - klen - 1, "%s", keys);
+        /* block cursor at the insertion point */
+        int cur_col = 1 + db->cmd_len;
+        if (cur_col < cols) {
+            attron(A_REVERSE);
+            mvaddch(rows - 1, cur_col, ' ');
+            attroff(A_REVERSE);
+        }
+
+        const char *hint = "Esc:cancel  Enter:execute";
+        int hlen = (int)strlen(hint);
+        if (cols - hlen - 2 > 0)
+            mvprintw(rows - 1, cols - hlen - 1, "%s", hint);
+    } else {
+        /* normal mode: show command message (timed) or static status text */
+        const char *left = (db->cmd_msg_frames > 0) ? db->cmd_msg
+                                                     : db->status_text;
+        if (left)
+            mvprintw(rows - 1, 1, "%s", left);
+
+        const char *keys = "q:quit  Tab:focus  Up/Down:scroll  ::cmd";
+        int klen = (int)strlen(keys);
+        if (cols - klen - 2 > 0)
+            mvprintw(rows - 1, cols - klen - 1, "%s", keys);
+    }
 
     for (int c = getcurx(stdscr); c < cols; c++)
         addch(' ');
@@ -522,7 +549,31 @@ static void draw_status_bar(ph_dashboard_t *db) {
     wnoutrefresh(stdscr);
 }
 
+/* ---- command dispatch ---- */
+
+static void dispatch_cmd(ph_dashboard_t *db) {
+    /* skip leading whitespace */
+    const char *s = db->cmd_buf;
+    while (*s == ' ') s++;
+
+    if (*s == '\0') return;  /* empty command */
+
+    if (strncmp(s, "filament", 8) == 0 && (s[8] == '\0' || s[8] == ' ')) {
+        snprintf(db->cmd_msg, sizeof(db->cmd_msg),
+                 "filament: not yet implemented");
+        db->cmd_msg_frames = 40;
+    } else {
+        snprintf(db->cmd_msg, sizeof(db->cmd_msg),
+                 "E492: Not an editor command: %s", s);
+        db->cmd_msg_frames = 30;
+    }
+}
+
 static void draw_all(ph_dashboard_t *db) {
+    /* tick down the command message display */
+    if (db->cmd_msg_frames > 0)
+        db->cmd_msg_frames--;
+
     draw_info_box(db);
     for (int i = 0; i < db->panel_count; i++)
         draw_panel(db, i);
@@ -761,7 +812,35 @@ int ph_dashboard_run(ph_dashboard_t *db) {
         /* handle keyboard */
         int ch;
         while ((ch = getch()) != ERR) {
+            if (db->cmd_active) {
+                /* command input mode -- all keys go to the command line */
+                if (ch == 27) { /* Esc */
+                    db->cmd_active = false;
+                    db->cmd_len = 0;
+                    db->cmd_buf[0] = '\0';
+                } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                    db->cmd_buf[db->cmd_len] = '\0';
+                    dispatch_cmd(db);
+                    db->cmd_active = false;
+                    db->cmd_len = 0;
+                    db->cmd_buf[0] = '\0';
+                } else if ((ch == KEY_BACKSPACE || ch == 127 || ch == '\b')
+                           && db->cmd_len > 0) {
+                    db->cmd_buf[--db->cmd_len] = '\0';
+                } else if (ch >= 0x20 && ch < 0x7f && db->cmd_len < 254) {
+                    db->cmd_buf[db->cmd_len++] = (char)ch;
+                    db->cmd_buf[db->cmd_len]   = '\0';
+                }
+                continue;
+            }
+
+            /* normal mode */
             switch (ch) {
+            case ':':
+                db->cmd_active = true;
+                db->cmd_len = 0;
+                db->cmd_buf[0] = '\0';
+                break;
             case 'q':
             case 'Q':
                 db->quit = true;

@@ -84,6 +84,7 @@ phosphor_sources = files(
   'src/commands/doctor_cmd.c',
   'src/commands/certs_cmd.c',
   'src/commands/serve_cmd.c',
+  'src/commands/filament_cmd.c',
   # serve
   'src/serve/serve.c',
   # dashboard

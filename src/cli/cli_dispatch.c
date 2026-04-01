@@ -40,6 +40,9 @@ int ph_cli_dispatch(const ph_cli_config_t *config,
     case PHOSPHOR_CMD_SERVE:
         return ph_cmd_serve(config, args);
 
+    case PHOSPHOR_CMD_FILAMENT:
+        return ph_cmd_filament(config, args);
+
     default:
         return PH_ERR_INTERNAL;
     }
