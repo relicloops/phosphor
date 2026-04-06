@@ -19,6 +19,7 @@ subprojects/libgit2/
 subprojects/libarchive/
 subprojects/pcre2/
 subprojects/curl/
+subprojects/cjson/
 
 # OS metadata
 .DS_Store
@@ -37,8 +38,10 @@ Thumbs.db
 website/build/
 website/public/
 website/node_modules/
+website/package-lock.json
 
 # website sensitive runtime data
 website/certs/
 website/data/
 website/keys/
+website/log/
