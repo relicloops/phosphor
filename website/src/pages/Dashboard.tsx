@@ -3,6 +3,7 @@ import { css } from '@relicloops/cathode';
 import { BackToTop } from '../components/BackToTop';
 import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
+import { ImageViewer } from '../components/ImageViewer';
 
 export const Dashboard = () => {
 
@@ -24,6 +25,14 @@ export const Dashboard = () => {
           neonsignal_redirect, and a file watcher into scrollable, color-coded
           panels with a poll()-based event loop.
         </p>
+
+        <div class="dash__screenshot">
+          <ImageViewer
+            src="/media/phosphor-dashboard.jpg"
+            alt="phosphor serve dashboard showing neonsignal panels with live-stream and debug-stream tabs, embedded shell, and screen overlay"
+            className="dash__screenshot-img"
+          />
+        </div>
 
         <div class="dash__cards">
           <a href="/dashboard-manual.html" class="dash__card">

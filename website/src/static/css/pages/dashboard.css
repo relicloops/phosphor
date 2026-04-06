@@ -23,6 +23,20 @@
   max-width: 680px;
 }
 
+/* Screenshot */
+.dash__screenshot {
+  margin-bottom: 3rem;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.dash__screenshot-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* Card grid */
 .dash__cards {
   display: grid;

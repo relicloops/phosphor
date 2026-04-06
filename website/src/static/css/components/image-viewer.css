@@ -1,0 +1,39 @@
+/* ImageViewer Component -- click-to-enlarge */
+
+.imgview__thumb {
+  cursor: zoom-in;
+  transition: opacity 0.15s ease;
+}
+
+.imgview__thumb:hover {
+  opacity: 0.85;
+}
+
+/* fullscreen overlay */
+.imgview__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.imgview__overlay--open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.imgview__full {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.5);
+}
