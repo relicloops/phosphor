@@ -1,0 +1,106 @@
+/* NavDropdown Component -- reusable hover dropdown for navigation
+ *
+ * Default class prefix: nav-drop
+ * Override via classPrefix prop for multiple independent dropdowns.
+ *
+ * Structure:
+ *   .nav-drop                 -- container (li), position: relative
+ *   .nav-drop__trigger        -- top-level link (also gets header__nav-link)
+ *   .nav-drop__menu           -- dropdown panel (ul)
+ *   .nav-drop__menu-item      -- dropdown row (li)
+ *   .nav-drop__menu-link      -- dropdown link (a)
+ */
+
+.nav-drop {
+  position: relative;
+}
+
+/* Dropdown panel -- hidden by default */
+.nav-drop__menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 180px;
+  padding: 0.5rem 0;
+  background: var(--bg-header);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) translateY(4px);
+  transition: opacity 0.15s ease, visibility 0.15s ease, transform 0.15s ease;
+  z-index: 1100;
+  list-style: none;
+}
+
+/* Show on hover -- targets both the trigger and the menu gap */
+.nav-drop:hover .nav-drop__menu,
+.nav-drop:focus-within .nav-drop__menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Invisible bridge between trigger and menu to prevent hover gap */
+.nav-drop::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 0.5rem;
+  background: transparent;
+}
+
+/* Menu items */
+.nav-drop__menu-item {
+  margin: 0;
+  padding: 0;
+}
+
+.nav-drop__menu-link {
+  display: block;
+  padding: 0.5rem 1.25rem;
+  font-family: var(--font-share-tech);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.nav-drop__menu-link:hover {
+  color: var(--link-hover);
+  background: var(--surface-raised);
+}
+
+/* Mobile: convert to stacked list */
+@media (max-width: 768px) {
+  .nav-drop__menu {
+    position: static;
+    transform: none;
+    min-width: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    opacity: 1;
+    visibility: visible;
+    margin-top: 0.25rem;
+    padding-left: 1rem;
+  }
+
+  .nav-drop__menu-link {
+    padding: 0.35rem 0;
+    font-size: 0.8rem;
+  }
+
+  .nav-drop::after {
+    display: none;
+  }
+}

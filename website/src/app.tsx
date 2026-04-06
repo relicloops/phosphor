@@ -9,6 +9,9 @@ const Index = lazyOnDemand( asDefaultExport( () => import( './pages/Index.js' ),
 const Docs = lazyOnDemand( asDefaultExport( () => import( './pages/Docs.js' ), mod => mod.Docs ) );
 const CliCommands = lazyOnDemand( asDefaultExport( () => import( './pages/CliCommands.js' ), mod => mod.CliCommands ) );
 const AiHistory = lazyOnDemand( asDefaultExport( () => import( './pages/AiHistory.js' ), mod => mod.AiHistory ) );
+const Dashboard = lazyOnDemand( asDefaultExport( () => import( './pages/Dashboard.js' ), mod => mod.Dashboard ) );
+const DashboardManual = lazyOnDemand( asDefaultExport( () => import( './pages/DashboardManual.js' ), mod => mod.DashboardManual ) );
+const DashboardImplementation = lazyOnDemand( asDefaultExport( () => import( './pages/DashboardImplementation.js' ), mod => mod.DashboardImplementation ) );
 const NotFound = lazyOnDemand( asDefaultExport( () => import( './pages/NotFound.js' ), mod => mod.NotFound ) );
 
 declare const __PHOSPHOR_DEV__: boolean;
@@ -169,6 +172,32 @@ function bootstrap() {
   /* ai history route check */
   if ( neonPath === '/ai-history.html' ) {
     renderPage( AiHistory );
+
+    return;
+  }
+
+  /* dashboard routes */
+  if ( neonPath === '/dashboard.html' ) {
+    renderPage( Dashboard );
+
+    return;
+  }
+
+  if ( neonPath === '/dashboard-manual.html' ) {
+    renderPage( DashboardManual );
+
+    return;
+  }
+
+  if ( neonPath === '/dashboard-implementation.html' ) {
+    renderPage( DashboardImplementation );
+
+    return;
+  }
+
+  /* legacy redirect */
+  if ( neonPath === '/dashboard-architecture.html' ) {
+    renderPage( DashboardImplementation );
 
     return;
   }

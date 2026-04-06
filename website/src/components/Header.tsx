@@ -1,5 +1,6 @@
 import { css } from '@relicloops/cathode';
 
+import { NavDropdown } from './NavDropdown';
 import { initTheme } from '../scripts/theme-toggler';
 
 export const Header = () => {
@@ -46,6 +47,14 @@ export const Header = () => {
           <li><a href="/docs.html" class="header__nav-link">Docs</a></li>
           <li><a href="/cli-commands.html" class="header__nav-link">CLI</a></li>
           <li><a href="/ai-history.html" class="header__nav-link">AI History</a></li>
+          <NavDropdown
+            label="Dashboard"
+            href="/dashboard.html"
+            items={[
+              { label: 'Manual', href: '/dashboard-manual.html' },
+              { label: 'Implementation', href: '/dashboard-implementation.html' },
+            ]}
+          />
         </ul>
       </nav>
 
