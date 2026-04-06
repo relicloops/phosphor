@@ -341,7 +341,7 @@ dashboard TUI features [COMPLETED]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 extensive dashboard enhancements split across granular ``db_*.c`` files
-(15 source files total in ``src/dashboard/``):
+(16 source files total in ``src/dashboard/``):
 
 - **cursor navigation**: arrow keys activate a visible cursor line with
   reverse-video highlighting (``CP_CURSOR_LINE``). ``cursor = -1`` means
@@ -360,10 +360,12 @@ extensive dashboard enhancements split across granular ``db_*.c`` files
   (``"0"``, ``"1"``, ...). clears panel after each save. read-modify-write
 - **:saveall**: saves all panels to ``DD.MM.YYYY.all.json`` with panel-keyed
   sub-objects per save slot. clears all panels after save
-- **fuzzy log finder** (``g``): popup overlay scanning cwd for ``.json``
-  files. fuzzy scoring with consecutive/boundary bonuses. file picker phase
-  lists files; Enter opens selected file in JSON viewer. implemented in
-  ``db_fuzzy.c``
+- **fuzzy log finder** (``g``): popup overlay recursively scanning cwd and
+  subdirectories for ``.json`` files. built-in excludes skip node_modules,
+  build, public, subprojects, etc. ``.gitignore`` and ``[fuzzy].exclude``
+  manifest patterns also applied. log directory always included. fuzzy
+  scoring with consecutive/boundary bonuses. file picker phase lists files;
+  Enter opens selected file in JSON viewer. implemented in ``db_fuzzy.c``
 - **JSON viewer popup**: full-screen tree browser with fold/unfold. all data
   starts folded. ``db_json_node_t`` flat array from cJSON pre-order traversal.
   syntax highlighting (keys cyan, strings green, numbers yellow, bools magenta).
@@ -381,6 +383,28 @@ extensive dashboard enhancements split across granular ``db_*.c`` files
   saveall
 - **start/stop buttons**: ``Ctrl-S``/``Ctrl-T`` with ``tcsetattr`` XON/XOFF
   override
+- **panel tabs**: per-panel tabs with stdout/stderr stream routing.
+  ``db_tab_t`` struct with per-tab ring buffer, scroll, cursor, selection,
+  fold. accessor inlines (``panel_ring()``, ``panel_scroll()``, etc.)
+  transparently resolve. neonsignal gets ``live-stream`` (stdout) and
+  ``debug-stream`` (stderr) tabs. ``1``-``4`` keys switch tabs
+- **embedded shell** (``db_shell.c``): PTY-backed command execution panel
+  between process panels and status bar. ``Ctrl+P`` creates views (up to 4),
+  ``Ctrl+B``/``Ctrl+R`` cycle view tabs, ``Ctrl+Q`` closes all. commands
+  typed in view input line, output in screen overlays. ``Ctrl+N`` cycles
+  screens, ``Ctrl+X`` minimizes, ``Ctrl+W`` saves to JSON. ``:shell`` and
+  ``:shellclose`` commands also available
+- **neonsignal logging flags**: 6 new flags (``--enable-debug``,
+  ``--enable-log``, ``--enable-log-color``, ``--enable-file-log``,
+  ``--log-directory``, ``--disable-proxies-check``) flow from manifest
+  through serve config to neonsignal spawn argv
+- **log directory routing**: all saves (``:save``, ``:saveall``, ``V`` export,
+  shell ``Ctrl+W``) route to configured ``--log-directory``. phosphor
+  pre-creates ``<log_dir>/``, ``<log_dir>/debug/``, ``<log_dir>/shell/``
+  before spawning neonsignal
+- **fuzzy exclude system**: ``[fuzzy].exclude`` manifest section plus
+  ``.gitignore`` parsing. built-in excludes for node_modules, build, etc.
+  log directory tree always included regardless of excludes
 
 terminal features library [COMPLETED]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

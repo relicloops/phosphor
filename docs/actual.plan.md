@@ -1,328 +1,241 @@
-# Plan: Dashboard Embedded Shell Panel
+# Plan: Update docs + commit all pending changes
 
-## Context
+## Pre-commit: Update docs, help, website
 
-The dashboard needs an embedded interactive terminal. Users want to run shell
-commands without leaving the TUI -- inspecting files, running curl, grepping
-logs, etc. The shell sits below the process panels and above the status bar.
+Before committing, these files need updating:
+- `src/dashboard/db_popup.c` -- help popup already updated
+- `docs/source/reference/dashboard-event-loop.rst` -- already updated
+- `website/src/pages/DashboardManual.tsx` -- already updated
+- `website/src/pages/DashboardImplementation.tsx` -- already updated
+- Regenerate AI-History: `just ai-history` from `website/`
+- Rebuild website: `just build` from `website/`
 
-### Terminology
+## Commit Plan (9 commits, SoC-ordered)
 
-- **shell** -- resizable panel region at the bottom, contains views (tabs)
-- **view** -- a tab inside the shell with its own input line and screen list
-- **screen** -- popup overlay showing one command's output (scrollable, saveable)
+### Commit 1: cJSON vendor + ph_json wrapper
 
-### Keybindings
+```
+feat(json): vendor cJSON v1.7.18 and add ph_json wrapper API
 
-| Key | Action |
-|-----|--------|
-| Alt+F11 | Toggle shell open / open new view |
-| Alt+F12 | Close shell entirely (kill all) |
-| Ctrl+Shift+Up | Increase shell height |
-| Ctrl+Shift+Down | Decrease shell height |
-| Ctrl+[1-9] | Jump to screen by number |
-| Ctrl+X | Close focused screen |
-| Ctrl+S | Save screen output to `cwd/shell/[date].command.txt` |
-| Ctrl+M | Minimize/restore focused screen |
-| Esc | Remove focus from shell, minimize all screens (shell stays open) |
-
-### Behavior
-
-- Each view has an input line (`$ ...`). Command typed there, Enter executes.
-- Output appears in a **screen** popup overlay (not inline in the view).
-- Blocking commands disable the view's input until the process exits.
-- Each command spawns via PTY using `$SHELL -c "command"`.
-- Multiple screens per view; Ctrl+[1-9] jumps to screen N, Ctrl+X closes, Ctrl+M minimizes.
-- Minimized screens keep running but hide their overlay.
-
----
-
-## Current State (from `db_types.h`)
-
-- Modes: `DB_MODE_NORMAL, COMMAND, POPUP, SEARCH, FUZZY`
-- Layout: info_box (top) -> panels (middle) -> status_bar (bottom row)
-- `layout_panels()`: `avail_rows = rows - info_h - 1` (1 for status bar)
-- No PTY support -- only pipe-based spawning exists
-- `MAX_FDS = PH_DASHBOARD_MAX_PANELS * 2 + 2` = 8
-- Color pairs: up to CP_TAB_INACTIVE = 49
-
----
-
-## Data Model (all in `db_types.h`)
-
-### New Constants
-
-```c
-#define DB_SHELL_MAX_VIEWS    4
-#define DB_SHELL_MAX_SCREENS  16
-#define DB_SHELL_INPUT_LEN    1024
-#define DB_SHELL_MIN_HEIGHT   3
-#define DB_SHELL_MAX_HEIGHT   40
-#define DB_SHELL_DEFAULT_H    8
+Add cJSON as a Meson cmake subproject with PHOSPHOR_HAS_CJSON compile
+flag. Create include/phosphor/json.h and src/core/json.c providing
+ph_json_parse, ph_json_parse_file, ph_json_get_string,
+ph_json_get_object, ph_json_add_object, ph_json_add_string,
+ph_json_print, ph_json_destroy -- thin wrappers over cJSON following
+the ph_ naming convention.
 ```
 
-### MAX_FDS Update
+Files:
+- `subprojects/cjson.wrap`
+- `subprojects/cjson/` (vendored)
+- `include/phosphor/json.h`
+- `src/core/json.c`
+- `meson.build` (cjson dep + json.c source)
 
-```c
-#define MAX_SHELL_FDS  DB_SHELL_MAX_SCREENS  /* practical: one pty fd per screen */
-#define MAX_FDS        (PH_DASHBOARD_MAX_PANELS * 2 + 2 + MAX_SHELL_FDS)
+### Commit 2: ACME migration to ph_json
+
+```
+refactor(certs): migrate ACME module from hand-rolled JSON to ph_json
+
+Replace all json_extract_string/json_extract_string_array calls with
+ph_json_parse/ph_json_get_string across 4 ACME files. Remove the old
+acme_json.h and acme_json.c. Zero internal headers remain in src/.
 ```
 
-### New Enums
+Files:
+- `src/certs/acme_account.c`
+- `src/certs/acme_order.c`
+- `src/certs/acme_challenge.c`
+- `src/certs/acme_finalize.c`
+- `src/certs/acme_json.c` (deleted)
+- `src/certs/acme_json.h` (deleted)
 
-```c
-/* add to db_mode_t */
-DB_MODE_SHELL,
+### Commit 3: Dashboard refactor + TUI features
 
-/* add to db_evt_type_t */
-DB_EVT_SHELL_DATA,
-DB_EVT_SHELL_EOF,
+```
+feat(dashboard): refactor into granular files with cursor, selection,
+search, save, fuzzy finder, JSON viewer, and popup system
+
+Split monolithic dashboard.c into 15 db_*.c files with single
+responsibility each. Add line cursor with auto-follow, vim-style
+visual select (v), JSON export (V), :save/:saveall/:clear commands,
+fuzzy log finder (g) with file picker, JSON viewer popup with tree
+folding, inline JSON fold (z), viewport freeze, and 6-type popup
+system.
 ```
 
-### New Color Pairs
+Files:
+- `src/dashboard/db_types.h`
+- `src/dashboard/db_ring.c`
+- `src/dashboard/db_layout.c`
+- `src/dashboard/db_draw.c`
+- `src/dashboard/db_popup.c`
+- `src/dashboard/db_evt_pipe.c`
+- `src/dashboard/db_evt_signal.c`
+- `src/dashboard/db_evt_child.c`
+- `src/dashboard/db_evt_key.c`
+- `src/dashboard/db_evt_tick.c`
+- `src/dashboard/db_event.c`
+- `src/dashboard/db_lifecycle.c`
+- `src/dashboard/db_fuzzy.c`
+- `src/dashboard/db_json_fold.c`
+- `src/dashboard/dashboard.c`
+- `include/phosphor/dashboard.h`
+- `meson.build` (dashboard source entries)
 
-```c
-CP_SHELL_BORDER       = 50,
-CP_SHELL_INPUT        = 51,
-CP_SHELL_PROMPT       = 52,
-CP_SHELL_TAB_ACTIVE   = 53,
-CP_SHELL_TAB_INACTIVE = 54,
-CP_SCREEN_BORDER      = 55,
-CP_SCREEN_TITLE       = 56,
+### Commit 4: Panel tabs (neonsignal live-stream / debug-stream)
+
+```
+feat(dashboard): add per-panel tabs with stdout/stderr stream routing
+
+Introduce db_tab_t struct with per-tab ring buffer, scroll, cursor,
+selection, and fold state. Accessor inlines (panel_ring, panel_scroll,
+etc.) transparently resolve to active tab or legacy inline fields.
+feed_accum_multi routes completed lines to matching tabs by source.
+Neonsignal panel gets live-stream (stdout) and debug-stream (stderr)
+tabs switchable with 1/2 keys. Non-tabbed panels unchanged.
 ```
 
-### Screen Struct
+Files:
+- `src/dashboard/db_types.h`
+- `include/phosphor/dashboard.h`
+- `src/dashboard/dashboard.c`
+- `src/dashboard/db_ring.c`
+- `src/dashboard/db_evt_pipe.c`
+- `src/dashboard/db_draw.c`
+- `src/dashboard/db_evt_key.c`
+- `src/dashboard/db_lifecycle.c`
+- `src/dashboard/db_json_fold.c`
+- `src/dashboard/db_fuzzy.c`
+- `src/commands/serve_cmd.c`
+- `src/dashboard/db_popup.c`
 
-```c
-typedef enum { DB_SCREEN_RUNNING, DB_SCREEN_EXITED } db_screen_status_t;
+### Commit 5: Neonsignal logging flags
 
-typedef struct {
-    char                 title[256];      /* command string */
-    pid_t                pid;
-    int                  pty_master_fd;   /* -1 when closed */
-    db_screen_status_t   status;
-    int                  exit_code;
-    db_ringbuf_t         ring;
-    db_accum_t           accum;
-    int                  scroll;
-    bool                 minimized;
-    WINDOW              *win;
-} db_shell_screen_t;
+```
+feat(serve): add neonsignal logging flags to serve pipeline
+
+Add 6 new flags (--enable-debug, --enable-log, --enable-log-color,
+--enable-file-log, --log-directory, --disable-proxies-check) flowing
+from template.phosphor.toml [serve.neonsignal] through serve config
+to neonsignal spawn argv. Three-tier resolution: CLI > manifest >
+default.
 ```
 
-### View Struct
+Files:
+- `include/phosphor/serve.h`
+- `include/phosphor/manifest.h`
+- `src/template/manifest_load.c`
+- `src/commands/phosphor_commands.c`
+- `src/commands/serve_cmd.c`
+- `src/serve/serve.c`
 
-```c
-typedef struct {
-    char                  input[DB_SHELL_INPUT_LEN];
-    int                   input_len;
-    int                   input_cursor;
-    db_shell_screen_t     screens[DB_SHELL_MAX_SCREENS];
-    int                   screen_count;
-    int                   active_screen;   /* -1 = none focused */
-    bool                  busy;            /* blocking command running */
-} db_shell_view_t;
+### Commit 6: Embedded shell panel
+
+```
+feat(dashboard): add embedded shell panel with PTY-backed command
+execution, views, and screen overlays
+
+Introduce DB_MODE_SHELL with db_shell.c handling PTY spawning via
+posix_openpt, view tabs (up to 4), screen popups for command output,
+and integrated event loop polling of PTY master fds. Shell opens with
+Ctrl+P, closes with Ctrl+Q, views cycle with Ctrl+B/R, screens
+navigate with Ctrl+N, minimize with Ctrl+X, save with Ctrl+S.
 ```
 
-### Shell Event Data
+Files:
+- `src/dashboard/db_types.h`
+- `src/dashboard/db_shell.c`
+- `src/dashboard/dashboard.c`
+- `src/dashboard/db_layout.c`
+- `src/dashboard/db_event.c`
+- `src/dashboard/db_evt_key.c`
+- `src/dashboard/db_evt_child.c`
+- `src/dashboard/db_draw.c`
+- `src/dashboard/db_lifecycle.c`
+- `src/dashboard/db_popup.c`
+- `meson.build`
 
-```c
-typedef struct {
-    int   view_idx;
-    int   screen_idx;
-    char  buf[4096];
-    int   len;
-} db_evt_shell_t;
+### Commit 7: Website dashboard pages + nav dropdown
+
+```
+feat(website): add dashboard landing, manual, and implementation pages
+with NavDropdown component
+
+Create Dashboard.tsx landing with card links, DashboardManual.tsx with
+16-section granular user guide using initScrollTracker,
+DashboardImplementation.tsx replacing DashboardArchitecture with
+updated content. Add reusable NavDropdown.tsx hover dropdown for
+header navigation. Update app.tsx routes and .cathode route registry.
 ```
 
-Add `db_evt_shell_t shell;` to `db_event_t` union.
+Files:
+- `website/src/pages/Dashboard.tsx`
+- `website/src/pages/DashboardManual.tsx`
+- `website/src/pages/DashboardImplementation.tsx`
+- `website/src/pages/DashboardArchitecture.tsx`
+- `website/src/components/NavDropdown.tsx`
+- `website/src/components/Header.tsx`
+- `website/src/app.tsx`
+- `website/src/static/css/pages/dashboard.css`
+- `website/src/static/css/pages/dashboard-manual.css`
+- `website/src/static/css/pages/dashboard-architecture.css`
+- `website/src/static/css/components/nav-dropdown.css`
+- `website/src/static/dashboard.html`
+- `website/src/static/dashboard-manual.html`
+- `website/src/static/dashboard-implementation.html`
+- `website/src/static/.cathode`
 
-### Shell State on `struct ph_dashboard`
+### Commit 8: Website manifest logging config
 
-```c
-/* shell */
-bool              shell_open;
-int               shell_height;
-db_shell_view_t   shell_views[DB_SHELL_MAX_VIEWS];
-int               shell_view_count;
-int               shell_active_view;
-WINDOW           *shell_win;
+```
+chore(website): enable neonsignal logging features in manifest
+
+Add enable_debug, enable_log, enable_log_color, enable_file_log,
+and log_directory settings to [serve.neonsignal] section of the
+website template.phosphor.toml.
 ```
 
-### Key Constants
+Files:
+- `website/template.phosphor.toml`
 
-```c
-#define KEY_ALT_F11       (KEY_MAX - 1)
-#define KEY_ALT_F12       (KEY_MAX - 2)
-#define KEY_CTRL_SHIFT_UP (KEY_MAX - 3)
-#define KEY_CTRL_SHIFT_DN (KEY_MAX - 4)
+### Commit 9: Docs, reference, plans, AI-History
+
+```
+docs: update plans, reference docs, and AI-History for dashboard
+tabs, logging flags, and embedded shell
+
+Update dashboard-event-loop.rst with panel tabs, embedded shell,
+and DB_MODE_SHELL sections. Update summary plan with new completed
+entries. Rename soc-audit plan to COMPLETED. Regenerate AI-History
+and rebuild website.
 ```
 
----
+Files:
+- `docs/source/reference/dashboard-event-loop.rst`
+- `docs/source/plans/summary.[ACTIVE].rst`
+- `docs/source/plans/soc-audit-json-consolidation.[COMPLETED].rst`
+- `docs/actual.plan.md`
+- `website/src/static/ai-history.json`
 
-## Phases
+## Excluded from commits
 
-### Phase 1: Types + constants (`db_types.h`)
+Per commit-guidelines, never stage:
+- `.claude/` directory
+- `CLAUDE.md`, `GEMINI.md`, `AGENTS.md`
 
-Add all new structs, enums, constants, color pairs, key defines listed above.
-Add `DB_MODE_SHELL` to mode enum.
-Add `DB_EVT_SHELL_DATA`/`DB_EVT_SHELL_EOF` to event enum.
-Add shell event to event union.
-Add shell state to `struct ph_dashboard`.
-Increase `MAX_FDS`.
-Add cross-file declarations for new functions.
-
-### Phase 2: PTY spawning + shell lifecycle (`db_shell.c` -- NEW)
-
-**PTY allocation:** `posix_openpt()` + `grantpt()` + `unlockpt()` + `ptsname()`.
-Available under `_POSIX_C_SOURCE=200809L`. Child uses `setsid()` + `open(slave)` +
-`dup2()` (avoids `login_tty()` BSD dependency).
-
-**Functions:**
-- `shell_spawn_command(cmd, *out_master_fd, rows, cols)` -- fork+pty, exec `$SHELL -c cmd`
-- `shell_toggle_or_new_view(db)` -- open shell or add view tab
-- `shell_close_all(db)` -- kill all, free all, close shell
-- `shell_resize(db, delta)` -- adjust shell_height, call layout_panels
-- `shell_execute_command(db, view)` -- create screen, spawn command
-- `shell_goto_screen(view, idx)` -- Ctrl+[1-9]: jump to screen by number
-- `shell_close_screen(db, view, idx)` -- Ctrl+X: kill, free, compact array
-- `shell_save_screen(db, scr)` -- Ctrl+S: write to `cwd/shell/[date].command.txt`
-- `handle_shell_data(db, evt)` -- feed PTY output into screen ring buffer
-- `handle_shell_eof(db, evt)` -- close PTY fd
-- `draw_shell(db)` -- render shell panel: border, view tabs, screen list, input line
-- `draw_shell_screens(db)` -- render active non-minimized screen as overlay popup
-
-### Phase 3: Shell key handler (`db_shell.c` -- same file)
-
-**`handle_key_shell(db, ch)`:**
-- When screen visible + non-minimized: Ctrl+[1-9] jump to screen N, Ctrl+X (0x18) close,
-  Ctrl+S (0x13) save, Ctrl+M/Enter (0x0D) minimize, arrows scroll screen
-- When no visible screen or input focused: character input, Enter executes,
-  Backspace/arrows edit
-- Esc: minimizes all screens in the active view, returns to DB_MODE_NORMAL
-  (shell stays open, processes keep running)
-
-**Ctrl+M vs Enter conflict:** 0x0D is both. Disambiguation: if a non-minimized
-screen overlay is visible, 0x0D = minimize. Otherwise 0x0D = submit input.
-
-### Phase 4: Key registration + global dispatch (`dashboard.c`, `db_evt_key.c`)
-
-**In `ph_dashboard_create()`:**
-```c
-define_key("\033\033[23~", KEY_ALT_F11);
-define_key("\033[23;3~",   KEY_ALT_F11);
-define_key("\033\033[24~", KEY_ALT_F12);
-define_key("\033[24;3~",   KEY_ALT_F12);
-define_key("\033[1;6A",    KEY_CTRL_SHIFT_UP);
-define_key("\033[1;6B",    KEY_CTRL_SHIFT_DN);
-```
-
-**In `handle_key()` (before mode switch):**
-```c
-if (ch == KEY_ALT_F11)       { shell_toggle_or_new_view(db); return; }
-if (ch == KEY_ALT_F12)       { shell_close_all(db); return; }
-if (ch == KEY_CTRL_SHIFT_UP  && db->shell_open) { shell_resize(db, +1); return; }
-if (ch == KEY_CTRL_SHIFT_DN  && db->shell_open) { shell_resize(db, -1); return; }
-```
-
-Add `case DB_MODE_SHELL: handle_key_shell(db, ch); break;` to mode switch.
-
-### Phase 5: Layout changes (`db_layout.c`)
-
-When `shell_open`, subtract `shell_height` from `avail_rows`:
-```c
-int shell_h = db->shell_open ? db->shell_height : 0;
-int avail_rows = rows - info_h - 1 - shell_h;
-```
-
-Position shell window above status bar:
-```c
-int shell_y = rows - 1 - shell_h;
-db->shell_win = newwin(shell_h, cols, shell_y, 0);
-```
-
-### Phase 6: Event loop (`db_event.c`)
-
-In `collect_events()`: add all active screen `pty_master_fd` values to the pollfd
-array (after panel fds, before stdin). Track `view_idx`/`screen_idx` per fd.
-On POLLIN: read into `DB_EVT_SHELL_DATA`. On EOF: `DB_EVT_SHELL_EOF`.
-
-In `handle_event()`: dispatch `DB_EVT_SHELL_DATA` -> `handle_shell_data()`,
-`DB_EVT_SHELL_EOF` -> `handle_shell_eof()`.
-
-Extend `reap_children()`: also waitpid on all shell screen PIDs, mark
-`DB_SCREEN_EXITED`, set `view->busy = false`.
-
-### Phase 7: Drawing integration (`db_draw.c`)
-
-In `draw_all()`, after panel drawing and before status bar:
-```c
-if (db->shell_open) draw_shell(db);
-```
-
-After status bar, before popups:
-```c
-if (db->shell_open) draw_shell_screens(db);
-```
-
-### Phase 8: Init + destroy (`dashboard.c`)
-
-- Init: zero shell fields in `ph_dashboard_create()`, add color pair inits
-- Destroy: call `shell_close_all(db)` in `ph_dashboard_destroy()`
-- Shutdown: kill shell screen processes in `shutdown_children()`
-
-### Phase 9: Build (`meson.build`)
-
-Add `src/dashboard/db_shell.c` to `phosphor_sources`.
-
----
-
-## Files Modified
-
-| File | Changes |
-|------|---------|
-| `src/dashboard/db_types.h` | All new types, constants, enums, key defines, shell state on dashboard, cross-file declarations |
-| `src/dashboard/db_shell.c` | NEW: PTY spawn, lifecycle, key handler, drawing, data handlers |
-| `src/dashboard/dashboard.c` | Init shell state, define_key calls, color pairs, destroy cleanup |
-| `src/dashboard/db_layout.c` | Subtract shell_height, create shell window |
-| `src/dashboard/db_event.c` | Poll shell PTY fds, dispatch shell events |
-| `src/dashboard/db_evt_key.c` | Global Alt+F11/F12/Ctrl+Shift+arrows intercept, DB_MODE_SHELL dispatch |
-| `src/dashboard/db_evt_child.c` | Reap shell screen children |
-| `src/dashboard/db_draw.c` | Call draw_shell/draw_shell_screens in draw_all |
-| `src/dashboard/db_lifecycle.c` | Kill shell processes in shutdown_children |
-| `meson.build` | Add db_shell.c to sources |
-
----
-
-## Key Conflicts
-
-| Key | Current Use | Shell Use | Conflict? |
-|-----|------------|-----------|-----------|
-| Ctrl+[1-9] | Unused | Jump to screen N | No |
-| Ctrl+X (0x18) | Unused | Close screen | No |
-| Ctrl+S (0x13) | Start button (normal mode) | Save screen (shell mode) | No -- different modes |
-| Ctrl+M (0x0D) | Enter/CR | Minimize screen | Yes -- disambiguate by context |
-| Alt+F11 | Unused | Toggle shell | No |
-| Alt+F12 | Unused | Close shell | No |
-
-**Ctrl+M resolution:** When active non-minimized screen visible -> minimize.
-Otherwise -> submit input (Enter).
-
----
+Also exclude generated/test data:
+- `website/04.04.2026.*.json`
+- `website/05.04.2026.*.json`
+- `website/phosphor.*.json`
+- `website/log/`
+- `website/log.x`
+- `website/package-lock.json` (unless intentional)
 
 ## Verification
 
-1. `meson setup build --wipe && ninja -C build` -- zero warnings
+After all commits:
+1. `ninja -C build` -- zero warnings
 2. `./build/phosphor version` -- smoke test
-3. `phosphor serve` in a project:
-   - Alt+F11: shell panel appears below panels, above status bar
-   - Type `ls` + Enter: screen popup shows directory listing
-   - Ctrl+Shift+Up/Down: shell panel resizes
-   - Alt+F11 again: second view tab appears
-   - Execute another command: second screen in the view
-   - Ctrl+2: jumps to screen 2
-   - Ctrl+M: minimizes/restores screen overlay
-   - Ctrl+S: saves output to `shell/[date].ls.txt`
-   - Ctrl+X: closes focused screen
-   - Alt+F12: everything closes, processes killed
-   - Esc: all screens minimize, focus returns to panels (shell stays open)
+3. `git log --oneline -9` -- verify commit messages
+4. `git diff HEAD~9..HEAD --stat` -- verify scope

@@ -15,7 +15,7 @@ dashboard event loop architecture
 
 the ``phosphor serve`` dashboard is an ncurses TUI that monitors child
 processes (neonsignal, neonsignal_redirect, file watcher) in real time.
-it was refactored from a monolithic 960-line file into 13 files with
+it was refactored from a monolithic 960-line file into 16 files with
 maximum separation of concerns: one file per subsystem, one file per
 event type.
 
@@ -54,7 +54,8 @@ types header ``db_types.h``.
    * - ``db_evt_child.c``
      - ``handle_child_exit()``, ``reap_children()``
    * - ``db_evt_key.c``
-     - ``handle_key()`` mode dispatch, normal/command/popup/search handlers
+     - ``handle_key()`` mode dispatch (6 modes: normal/command/popup/search/fuzzy/shell),
+       global shell key intercepts (Ctrl+P/G/B/R/Q)
    * - ``db_evt_tick.c``
      - ``handle_tick()`` -- message frame countdown, button flash
    * - ``db_event.c``
@@ -211,16 +212,22 @@ are interpreted::
   popup back to previous mode (FUZZY for JSON viewer, NORMAL for others).
 - **SHELL**: embedded shell panel has focus. input goes to the view's
   command line. screen overlays are navigable. ``Esc`` minimizes all
-  screens and returns to NORMAL. ``Alt+F11`` enters from any mode.
+  screens and returns to NORMAL. ``Ctrl+P`` opens shell from any mode,
+  ``Ctrl+G`` focuses back to an open shell from NORMAL.
+  ``:shell`` / ``:shellclose`` commands also available.
 
-mode transitions are handled in ``db_evt_key.c::handle_key()``::
+mode transitions are handled in ``db_evt_key.c::handle_key()``. before
+the mode switch, global shell keybindings are intercepted (``Ctrl+P``,
+``Ctrl+Q``, ``Ctrl+B``, ``Ctrl+R``, ``Ctrl+G``)::
 
     void handle_key(ph_dashboard_t *db, int ch) {
+        /* global shell intercepts first ... */
         switch (db->mode) {
         case DB_MODE_POPUP:   handle_key_popup(db, ch);   break;
         case DB_MODE_COMMAND: handle_key_command(db, ch);  break;
         case DB_MODE_SEARCH:  handle_key_search(db, ch);   break;
         case DB_MODE_FUZZY:   handle_key_fuzzy(db, ch);    break;
+        case DB_MODE_SHELL:   handle_key_shell(db, ch);    break;
         case DB_MODE_NORMAL:  handle_key_normal(db, ch);   break;
         }
     }
@@ -501,6 +508,10 @@ save and clear
 ``:save <path>`` and ``:saveall`` use incremental JSON export with panel
 clearing -- the same structured format as the ``V`` export.
 
+all saves are routed to the configured ``--log-directory`` (from
+``[serve.neonsignal]`` manifest or CLI flag). if no log directory is
+configured, files are written to cwd.
+
 ``:save <path>`` (focused panel)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -578,6 +589,10 @@ available dashboard commands (entered via ``:`` in command mode):
      - Save panel to JSON with incremental slots, clear panel
    * - ``:saveall``
      - Save all panels to JSON with incremental slots, clear all
+   * - ``:shell``
+     - Open embedded shell (same as Ctrl+P)
+   * - ``:shellclose``
+     - Close embedded shell (same as Ctrl+Q)
    * - ``:filament``
      - (not yet implemented)
 
@@ -612,7 +627,11 @@ behind the popup.
 
 **file picker phase** (``fuzzy_picking = true``):
 
-- lists all ``.json`` files found in cwd
+- recursively scans cwd and subdirectories for ``.json`` files
+- the log directory tree (``--log-directory``) is always included
+- built-in excludes skip: ``node_modules``, ``build``, ``public``, ``.venv``,
+  ``__pycache__``, ``subprojects``, ``certs``, ``.cache``, ``.git``
+- additional excludes from ``.gitignore`` and ``[fuzzy].exclude`` in manifest
 - typing filters the list with fuzzy matching (characters must appear in
   order, case-insensitive, with consecutive/boundary bonuses)
 - ``Up``/``Down`` navigate the result list
@@ -738,17 +757,23 @@ terminology:
    * - Key
      - Action
    * - ``Ctrl+P``
-     - Toggle shell open / open new view tab
+     - Create new shell view (opens shell if not open, up to 4 views)
+   * - ``Ctrl+G``
+     - Focus back to shell (from normal mode)
+   * - ``Ctrl+B``
+     - Next shell view tab
+   * - ``Ctrl+R``
+     - Previous shell view tab
    * - ``Ctrl+Q``
      - Close shell entirely (kill all processes)
    * - ``Ctrl+D``
      - Open phosphor command bar from shell mode
+   * - ``Ctrl+N``
+     - Cycle to next screen
    * - ``Ctrl+X``
      - Minimize focused screen overlay
-   * - ``Ctrl+S``
-     - Save screen output to ``shell/[date].command.txt``
-   * - ``1``-``9``
-     - Open screen by number
+   * - ``Ctrl+W``
+     - Save screen output to ``<log_dir>/shell/DD.MM.YYYY.shell.json``
    * - ``Esc``
      - Minimize all screens, return focus to panels
 
