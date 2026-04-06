@@ -50,6 +50,23 @@ ph_result_t ph_dashboard_create(const ph_dashboard_config_t *cfg,
     db->serve_cfg = cfg->serve_cfg;
     db->session_ptr = cfg->session_ptr;
 
+    /* copy fuzzy excludes (own the strings) */
+    db->fuzzy_excludes = NULL;
+    db->fuzzy_exclude_count = 0;
+    if (cfg->fuzzy_exclude_count > 0 && cfg->fuzzy_excludes) {
+        db->fuzzy_excludes = ph_alloc(
+            (size_t)cfg->fuzzy_exclude_count * sizeof(char *));
+        if (db->fuzzy_excludes) {
+            for (int i = 0; i < cfg->fuzzy_exclude_count; i++) {
+                size_t len = strlen(cfg->fuzzy_excludes[i]);
+                db->fuzzy_excludes[i] = ph_alloc(len + 1);
+                if (db->fuzzy_excludes[i])
+                    memcpy(db->fuzzy_excludes[i], cfg->fuzzy_excludes[i], len + 1);
+            }
+            db->fuzzy_exclude_count = cfg->fuzzy_exclude_count;
+        }
+    }
+
     /* copy info lines */
     db->info_count = cfg->info_count;
     for (int i = 0; i < cfg->info_count && i < PH_DASHBOARD_MAX_INFO_LINES; i++)
@@ -259,6 +276,11 @@ void ph_dashboard_destroy(ph_dashboard_t *db) {
 
     shell_close_all(db);
     fuzzy_unload_disk(db);
+    if (db->fuzzy_excludes) {
+        for (int i = 0; i < db->fuzzy_exclude_count; i++)
+            ph_free(db->fuzzy_excludes[i]);
+        ph_free(db->fuzzy_excludes);
+    }
     if (db->jv_nodes) {
         for (int i = 0; i < db->jv_node_count; i++) {
             if (db->jv_nodes[i].key) ph_free(db->jv_nodes[i].key);

@@ -4,6 +4,11 @@
 #include "phosphor/alloc.h"
 #include "phosphor/log.h"
 
+#ifdef PHOSPHOR_HAS_CJSON
+#include "phosphor/json.h"
+#include <cJSON.h>
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -210,51 +215,100 @@ void shell_close_screen(ph_dashboard_t *db, db_shell_view_t *view,
 }
 
 static void shell_save_screen(ph_dashboard_t *db, db_shell_screen_t *scr) {
-    /* create shell/ directory */
-    mkdir("shell", 0755);
+#ifndef PHOSPHOR_HAS_CJSON
+    (void)scr;
+    set_cmd_msg(db, "shell save: cJSON not available", 30);
+#else
+    /* resolve log directory: <log_dir>/shell/ */
+    const char *logdir = (db->serve_cfg && db->serve_cfg->ns.log_directory)
+                       ? db->serve_cfg->ns.log_directory : ".";
+    char shelldir[256];
+    snprintf(shelldir, sizeof(shelldir), "%s/shell", logdir);
+    mkdir(logdir, 0755);
+    mkdir(shelldir, 0755);
 
-    /* build filename: shell/DD.MM.YYYY.command.txt */
+    /* build filename: <log_dir>/shell/DD.MM.YYYY.shell.json */
     char date[16];
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     snprintf(date, sizeof(date), "%02d.%02d.%04d",
              tm->tm_mday, tm->tm_mon + 1, tm->tm_year + 1900);
 
-    /* sanitize command for filename */
-    char cmd_safe[64];
-    int ci = 0;
-    for (int i = 0; scr->title[i] && ci < 60; i++) {
-        char c = scr->title[i];
-        if (c == ' ' || c == '/' || c == '\\' || c == ':')
-            cmd_safe[ci++] = '_';
-        else if (c >= 0x20 && c < 0x7f)
-            cmd_safe[ci++] = c;
-    }
-    cmd_safe[ci] = '\0';
-
     char fname[256];
-    snprintf(fname, sizeof(fname), "shell/%s.%s.txt", date, cmd_safe);
+    snprintf(fname, sizeof(fname), "%s/%s.shell.json", shelldir, date);
 
-    FILE *f = fopen(fname, "a");
-    if (!f) {
-        set_cmd_msg(db, "shell: cannot write file", 30);
+    /* read existing file or create new root */
+    cJSON *root = NULL;
+    {
+        ph_json_t *jr = ph_json_parse_file(fname);
+        if (jr) {
+            root = cJSON_Duplicate((cJSON *)jr, 1);
+            ph_json_destroy(jr);
+        }
+    }
+    if (!root) root = cJSON_CreateObject();
+    if (!root) {
+        set_cmd_msg(db, "shell save: alloc failed", 30);
         return;
     }
 
-    char stripped[MAX_LINE_LEN];
-    int count = scr->ring.count;
-    for (int i = 0; i < count; i++) {
-        db_line_t *line = ringbuf_get(&scr->ring, i);
-        if (!line || !line->text) continue;
-        int slen = strip_ansi(stripped, line->text, line->len);
-        stripped[slen] = '\0';
-        fprintf(f, "%s\n", stripped);
+    /* find next slot number */
+    int slot_idx = 0;
+    {
+        cJSON *item = NULL;
+        cJSON_ArrayForEach(item, root) {
+            if (item->string) {
+                int v = atoi(item->string);
+                if (v >= slot_idx) slot_idx = v + 1;
+            }
+        }
     }
-    fclose(f);
+
+    char slot_key[16];
+    snprintf(slot_key, sizeof(slot_key), "%d", slot_idx);
+
+    /* build slot: { "cmd": "...", "exit": N, "lines": { "0": "...", ... } } */
+    cJSON *slot = cJSON_CreateObject();
+    if (!slot) { cJSON_Delete(root); set_cmd_msg(db, "shell save: alloc failed", 30); return; }
+    cJSON_AddItemToObject(root, slot_key, slot);
+
+    cJSON_AddStringToObject(slot, "cmd", scr->title);
+    cJSON_AddNumberToObject(slot, "exit", scr->exit_code);
+
+    cJSON *lines = cJSON_CreateObject();
+    if (lines) {
+        cJSON_AddItemToObject(slot, "lines", lines);
+        char stripped[MAX_LINE_LEN];
+        char idx_str[16];
+        int count = scr->ring.count;
+        int saved = 0;
+        for (int i = 0; i < count; i++) {
+            db_line_t *line = ringbuf_get(&scr->ring, i);
+            if (!line || !line->text) continue;
+            int slen = strip_ansi(stripped, line->text, line->len);
+            stripped[slen] = '\0';
+            snprintf(idx_str, sizeof(idx_str), "%d", saved);
+            cJSON_AddStringToObject(lines, idx_str, stripped);
+            saved++;
+        }
+    }
+
+    /* write */
+    char *out = cJSON_Print(root);
+    cJSON_Delete(root);
+    if (out) {
+        FILE *f = fopen(fname, "w");
+        if (f) {
+            fwrite(out, 1, strlen(out), f);
+            fclose(f);
+        }
+        free(out);
+    }
 
     char msg[256];
-    snprintf(msg, sizeof(msg), "saved %d lines to %s", count, fname);
+    snprintf(msg, sizeof(msg), "saved [%d] to %s", slot_idx, fname);
     set_cmd_msg(db, msg, 30);
+#endif /* PHOSPHOR_HAS_CJSON */
 }
 
 /* ---- shell data handlers ---- */
@@ -334,7 +388,7 @@ void handle_key_shell(ph_dashboard_t *db, int ch) {
             view->active_screen = -1;
             clearok(stdscr, TRUE);
             return;
-        case 0x13: /* Ctrl+S: save screen output */
+        case 0x17: /* Ctrl+W: save screen output */
             shell_save_screen(db, active_scr);
             return;
         case KEY_UP: case 'k':

@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* ---- fuzzy scoring ---- */
 
@@ -46,7 +47,118 @@ int fuzzy_score(const char *text, const char *pattern, int patlen) {
     return score;
 }
 
-/* ---- scan cwd for *.json files ---- */
+/* ---- recursive scan for *.json files ---- */
+
+/* capacity management for the file list */
+#define FUZZY_INITIAL_CAP 64
+
+static int fuzzy_cap;
+
+static bool fuzzy_grow(ph_dashboard_t *db) {
+    int new_cap = fuzzy_cap * 2;
+    char **grown = ph_realloc(db->fuzzy_files,
+                              (size_t)new_cap * sizeof(char *));
+    if (!grown) return false;
+    db->fuzzy_files = grown;
+    fuzzy_cap = new_cap;
+    return true;
+}
+
+static void fuzzy_add_file(ph_dashboard_t *db, const char *path) {
+    if (db->fuzzy_file_count >= fuzzy_cap && !fuzzy_grow(db))
+        return;
+    size_t len = strlen(path);
+    char *copy = ph_alloc(len + 1);
+    if (!copy) return;
+    memcpy(copy, path, len + 1);
+    db->fuzzy_files[db->fuzzy_file_count++] = copy;
+}
+
+static bool fuzzy_is_excluded(ph_dashboard_t *db, const char *path) {
+    /* never exclude the log directory tree */
+    if (db->serve_cfg && db->serve_cfg->ns.log_directory) {
+        const char *ld = db->serve_cfg->ns.log_directory;
+        size_t ldlen = strlen(ld);
+        if (strncmp(path, ld, ldlen) == 0
+            && (path[ldlen] == '/' || path[ldlen] == '\0'))
+            return false;
+    }
+
+    for (int i = 0; i < db->fuzzy_exclude_count; i++) {
+        const char *pat = db->fuzzy_excludes[i];
+        if (!pat) continue;
+        /* match: exact dir name, or path starts with pattern/ */
+        if (strcmp(path, pat) == 0) return true;
+        size_t plen = strlen(pat);
+        if (strncmp(path, pat, plen) == 0 && path[plen] == '/')
+            return true;
+        /* also match basename against pattern (e.g. "node_modules") */
+        const char *base = strrchr(path, '/');
+        base = base ? base + 1 : path;
+        if (strcmp(base, pat) == 0) return true;
+    }
+    return false;
+}
+
+/* built-in dirs that are never useful for the fuzzy finder */
+static const char *builtin_excludes[] = {
+    "node_modules", "build", "public", ".venv", "__pycache__",
+    "subprojects", "certs", ".cache", ".git",
+};
+#define BUILTIN_EXCLUDE_COUNT \
+    ((int)(sizeof(builtin_excludes) / sizeof(builtin_excludes[0])))
+
+static bool fuzzy_builtin_excluded(const char *name) {
+    for (int i = 0; i < BUILTIN_EXCLUDE_COUNT; i++) {
+        if (strcmp(name, builtin_excludes[i]) == 0) return true;
+    }
+    return false;
+}
+
+static void fuzzy_scan_dir(ph_dashboard_t *db, const char *dirpath) {
+    DIR *dir = opendir(dirpath);
+    if (!dir) return;
+
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        const char *name = ent->d_name;
+        if (name[0] == '.') continue;  /* skip hidden + . + .. */
+
+        char fullpath[512];
+        if (dirpath[0] == '.' && dirpath[1] == '\0')
+            snprintf(fullpath, sizeof(fullpath), "%s", name);
+        else
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", dirpath, name);
+
+        /* never exclude the log directory tree */
+        bool is_log_path = false;
+        if (db->serve_cfg && db->serve_cfg->ns.log_directory) {
+            const char *ld = db->serve_cfg->ns.log_directory;
+            size_t ldlen = strlen(ld);
+            if (strncmp(fullpath, ld, ldlen) == 0
+                && (fullpath[ldlen] == '/' || fullpath[ldlen] == '\0'))
+                is_log_path = true;
+        }
+
+        /* check excludes (built-in + user-configured) -- skip for log paths */
+        if (!is_log_path && fuzzy_builtin_excluded(name)) continue;
+        if (!is_log_path && fuzzy_is_excluded(db, fullpath)) continue;
+
+        /* check if it's a directory -- recurse */
+        struct stat st;
+        if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode)) {
+            fuzzy_scan_dir(db, fullpath);
+            continue;
+        }
+
+        /* check .json extension */
+        size_t nlen = strlen(name);
+        if (nlen > 5 && strcmp(name + nlen - 5, ".json") == 0)
+            fuzzy_add_file(db, fullpath);
+    }
+
+    closedir(dir);
+}
 
 bool fuzzy_scan_json_files(ph_dashboard_t *db) {
     /* free any previous file list */
@@ -58,39 +170,13 @@ bool fuzzy_scan_json_files(ph_dashboard_t *db) {
         db->fuzzy_file_count = 0;
     }
 
-    DIR *dir = opendir(".");
-    if (!dir) return false;
+    fuzzy_cap = FUZZY_INITIAL_CAP;
+    db->fuzzy_files = ph_alloc((size_t)fuzzy_cap * sizeof(char *));
+    if (!db->fuzzy_files) return false;
 
-    /* first pass: count .json files */
-    int count = 0;
-    struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL) {
-        const char *name = ent->d_name;
-        size_t nlen = strlen(name);
-        if (nlen > 5 && strcmp(name + nlen - 5, ".json") == 0)
-            count++;
-    }
+    /* scan cwd + subdirectories (log/, log/debug/, shell/, etc.) */
+    fuzzy_scan_dir(db, ".");
 
-    if (count == 0) { closedir(dir); return false; }
-
-    db->fuzzy_files = ph_alloc((size_t)count * sizeof(char *));
-    if (!db->fuzzy_files) { closedir(dir); return false; }
-
-    /* second pass: collect filenames */
-    rewinddir(dir);
-    db->fuzzy_file_count = 0;
-    while ((ent = readdir(dir)) != NULL && db->fuzzy_file_count < count) {
-        const char *name = ent->d_name;
-        size_t nlen = strlen(name);
-        if (nlen > 5 && strcmp(name + nlen - 5, ".json") == 0) {
-            char *copy = ph_alloc(nlen + 1);
-            if (!copy) continue;
-            memcpy(copy, name, nlen + 1);
-            db->fuzzy_files[db->fuzzy_file_count++] = copy;
-        }
-    }
-
-    closedir(dir);
     return db->fuzzy_file_count > 0;
 }
 

@@ -375,6 +375,9 @@ struct ph_dashboard {
     int             jv_cursor;      /* visible-index of cursor */
     int             jv_scroll;      /* first visible row in viewport */
     char            jv_title[256];  /* filename being viewed */
+    /* fuzzy excludes (owned copies) */
+    char            **fuzzy_excludes;
+    int               fuzzy_exclude_count;
     /* shell */
     bool              shell_open;
     int               shell_height;

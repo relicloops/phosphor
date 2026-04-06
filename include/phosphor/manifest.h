@@ -141,6 +141,14 @@ typedef struct {
     bool  present;      /* true if [deploy] found in TOML */
 } ph_deploy_config_t;
 
+/* ---- fuzzy finder configuration ---- */
+
+typedef struct {
+    char  **exclude;       /* directory/file patterns to skip */
+    size_t  exclude_count;
+    bool    present;       /* true if [fuzzy] found in TOML */
+} ph_fuzzy_config_t;
+
 /* ---- serve configuration ---- */
 
 /*
@@ -230,6 +238,7 @@ typedef struct {
     ph_build_config_t   build;
     ph_deploy_config_t  deploy;
     ph_serve_manifest_config_t serve;
+    ph_fuzzy_config_t   fuzzy;
     ph_op_def_t        *ops;
     size_t              op_count;
     ph_hook_def_t      *hooks;

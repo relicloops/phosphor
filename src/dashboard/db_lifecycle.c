@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 
@@ -125,6 +126,13 @@ void action_clear(ph_dashboard_t *db) {
 
 /* ---- save helpers ---- */
 
+/* return the configured log directory or "." as fallback */
+static const char *log_base_dir(ph_dashboard_t *db) {
+    if (db->serve_cfg && db->serve_cfg->ns.log_directory)
+        return db->serve_cfg->ns.log_directory;
+    return ".";
+}
+
 #ifdef PHOSPHOR_HAS_CJSON
 
 /* build today's date prefix "DD.MM.YYYY" */
@@ -225,14 +233,17 @@ void action_save(ph_dashboard_t *db, const char *path) {
     char date[16];
     save_date_prefix(date, sizeof(date));
 
+    const char *logdir = log_base_dir(db);
+    mkdir(logdir, 0755);
+
     char fname[512];
     if (p->tab_count > 0)
-        snprintf(fname, sizeof(fname), "%s.%s.%s.%s.json",
-                 date, p->name ? p->name : "panel",
+        snprintf(fname, sizeof(fname), "%s/%s.%s.%s.%s.json",
+                 logdir, date, p->name ? p->name : "panel",
                  p->tabs[p->active_tab].name, path);
     else
-        snprintf(fname, sizeof(fname), "%s.%s.%s.json",
-                 date, p->name ? p->name : "panel", path);
+        snprintf(fname, sizeof(fname), "%s/%s.%s.%s.json",
+                 logdir, date, p->name ? p->name : "panel", path);
     for (char *c = fname; *c; c++) {
         if (*c == ' ') *c = '_';
     }
@@ -309,12 +320,15 @@ void action_saveall(ph_dashboard_t *db) {
         return;
     }
 
-    /* build filename: DD.MM.YYYY.all.json */
+    /* build filename: <logdir>/DD.MM.YYYY.all.json */
     char date[16];
     save_date_prefix(date, sizeof(date));
 
+    const char *logdir = log_base_dir(db);
+    mkdir(logdir, 0755);
+
     char fname[256];
-    snprintf(fname, sizeof(fname), "%s.all.json", date);
+    snprintf(fname, sizeof(fname), "%s/%s.all.json", logdir, date);
 
     /* read existing file or create new root */
     cJSON *root = NULL;
@@ -513,10 +527,13 @@ void action_export_selection(ph_dashboard_t *db) {
     int sel_lo = p_sel < p_cur ? p_sel : p_cur;
     int sel_hi = p_sel > p_cur ? p_sel : p_cur;
 
-    /* build filename: phosphor.<name>.json (sanitize spaces) */
+    /* build filename: <logdir>/phosphor.<name>.json (sanitize spaces) */
+    const char *logdir = log_base_dir(db);
+    mkdir(logdir, 0755);
+
     char fname[256];
-    snprintf(fname, sizeof(fname), "phosphor.%s.json",
-             p->name ? p->name : "panel");
+    snprintf(fname, sizeof(fname), "%s/phosphor.%s.json",
+             logdir, p->name ? p->name : "panel");
     for (char *c = fname; *c; c++) {
         if (*c == ' ') *c = '_';
     }

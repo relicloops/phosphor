@@ -81,6 +81,9 @@ typedef struct {
     /* borrowed pointers for start/stop lifecycle (both may be NULL) */
     const ph_serve_config_t   *serve_cfg;
     ph_serve_session_t       **session_ptr;
+    /* fuzzy finder exclude patterns (borrowed, NULL-terminated) */
+    const char * const        *fuzzy_excludes;
+    int                        fuzzy_exclude_count;
 } ph_dashboard_config_t;
 
 /* ---- opaque dashboard handle ---- */

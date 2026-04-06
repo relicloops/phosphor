@@ -598,6 +598,32 @@ ph_result_t ph_manifest_load(const char *path, ph_manifest_t *out,
     rc = parse_serve_config(root, &out->serve);
     if (rc != PH_OK) { toml_free(root); return PH_ERR; }
 
+    /* [fuzzy] section */
+    out->fuzzy.present = false;
+    out->fuzzy.exclude = NULL;
+    out->fuzzy.exclude_count = 0;
+    {
+        toml_table_t *fz = toml_table_table(root, "fuzzy");
+        if (fz) {
+            out->fuzzy.present = true;
+            toml_array_t *ex = toml_table_array(fz, "exclude");
+            if (ex) {
+                int n = toml_array_len(ex);
+                if (n > 0) {
+                    out->fuzzy.exclude = ph_alloc((size_t)n * sizeof(char *));
+                    if (out->fuzzy.exclude) {
+                        for (int i = 0; i < n; i++) {
+                            toml_value_t v = toml_array_string(ex, i);
+                            if (v.ok && v.u.s) {
+                                out->fuzzy.exclude[out->fuzzy.exclude_count++] = v.u.s;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     rc = parse_ops(root, &out->ops, &out->op_count, err);
     if (rc != PH_OK) { toml_free(root); return PH_ERR; }
 

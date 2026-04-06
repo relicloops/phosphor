@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static int flag_int(const ph_parsed_args_t *args, const char *name) {
@@ -337,6 +338,16 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         }
     }
 
+    /* step 7b: ensure log directories exist before spawning neonsignal */
+    if (cfg.ns.log_directory) {
+        mkdir(cfg.ns.log_directory, 0755);
+        char subdir[512];
+        snprintf(subdir, sizeof(subdir), "%s/debug", cfg.ns.log_directory);
+        mkdir(subdir, 0755);
+        snprintf(subdir, sizeof(subdir), "%s/shell", cfg.ns.log_directory);
+        mkdir(subdir, 0755);
+    }
+
     /* step 8: determine dashboard mode */
     bool use_dashboard = false;
 #ifdef PHOSPHOR_HAS_NCURSES
@@ -487,6 +498,44 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         dcfg.serve_cfg = &cfg;
         dcfg.session_ptr = &session;
 
+        /* build fuzzy exclude list: .gitignore + [fuzzy].exclude */
+        char *fz_owned[128];   /* heap copies freed after dashboard */
+        const char *fz_excludes[128];
+        int fz_count = 0;
+        int fz_owned_count = 0;
+
+        /* parse .gitignore (one pattern per line, skip comments/blanks) */
+        {
+            FILE *gi = fopen(".gitignore", "r");
+            if (gi) {
+                char line[256];
+                while (fgets(line, (int)sizeof(line), gi) && fz_count < 120) {
+                    int len = (int)strlen(line);
+                    while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r'
+                           || line[len-1] == ' ')) line[--len] = '\0';
+                    if (len == 0 || line[0] == '#') continue;
+                    if (len > 0 && line[len-1] == '/') line[--len] = '\0';
+                    if (len == 0) continue;
+                    char *copy = ph_alloc((size_t)len + 1);
+                    if (copy) {
+                        memcpy(copy, line, (size_t)len + 1);
+                        fz_owned[fz_owned_count++] = copy;
+                        fz_excludes[fz_count++] = copy;
+                    }
+                }
+                fclose(gi);
+            }
+        }
+
+        /* append manifest [fuzzy].exclude */
+        if (has_manifest && manifest.fuzzy.present) {
+            for (size_t i = 0; i < manifest.fuzzy.exclude_count && fz_count < 128; i++)
+                fz_excludes[fz_count++] = manifest.fuzzy.exclude[i];
+        }
+
+        dcfg.fuzzy_excludes = fz_count > 0 ? fz_excludes : NULL;
+        dcfg.fuzzy_exclude_count = fz_count;
+
         ph_dashboard_t *db = NULL;
         if (ph_dashboard_create(&dcfg, &db) == PH_OK) {
             exit_code = ph_dashboard_run(db);
@@ -496,6 +545,10 @@ int ph_cmd_serve(const ph_cli_config_t *config,
                           "falling back to raw mode");
             exit_code = ph_serve_wait(session);
         }
+
+        /* free .gitignore copies */
+        for (int i = 0; i < fz_owned_count; i++)
+            ph_free(fz_owned[i]);
     } else
 #endif
     {

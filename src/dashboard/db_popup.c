@@ -11,7 +11,7 @@
 #define ABOUT_W     46
 #define ABOUT_H     10
 #define CMDS_W      50
-#define CMDS_H      15
+#define CMDS_H      17
 #define PH_HELP_W   56
 #define PH_HELP_H   20
 
@@ -117,7 +117,7 @@ static void draw_help_content(ph_dashboard_t *db) {
         { "Ctrl-D",  "Open cmd bar from shell" },
         { "Ctrl-N",  "Next screen (shell)" },
         { "Ctrl-X",  "Minimize screen (shell)" },
-        { "Ctrl-S",  "Save screen to file (shell)" },
+        { "Ctrl-W",  "Save screen to file (shell)" },
     };
     int nbind = (int)(sizeof(bindings) / sizeof(bindings[0]));
 
@@ -198,6 +198,8 @@ static void draw_commands_content(ph_dashboard_t *db) {
         { ":clear",       "Clear focused panel log" },
         { ":save <path>", "Save panel to JSON, clear" },
         { ":saveall",     "Save all panels to JSON, clear" },
+        { ":shell",       "Open embedded shell (Ctrl-P)" },
+        { ":shellclose",  "Close embedded shell (Ctrl-Q)" },
         { ":filament",    "(not yet implemented)" },
     };
     int ncmds = (int)(sizeof(cmds) / sizeof(cmds[0]));
