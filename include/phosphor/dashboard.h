@@ -3,6 +3,7 @@
 
 #include "phosphor/types.h"
 #include "phosphor/error.h"
+#include "phosphor/serve.h"
 
 #include <sys/types.h>
 
@@ -47,6 +48,15 @@ typedef struct {
     ph_dashboard_info_color_t  color;
 } ph_dashboard_info_line_t;
 
+/* ---- tab configuration (optional per-panel) ---- */
+
+#define PH_DASHBOARD_MAX_TABS 4
+
+typedef struct {
+    const char *name;            /* tab display name, e.g. "live-stream" */
+    int         source_stream;   /* 0=stdout, 1=stderr, 2=both */
+} ph_dashboard_tab_cfg_t;
+
 /* ---- panel configuration ---- */
 
 typedef struct {
@@ -55,6 +65,9 @@ typedef struct {
     int                     stdout_fd;  /* -1 if not connected */
     int                     stderr_fd;  /* -1 if not connected */
     pid_t                   pid;        /* 0 if not spawned */
+    /* tab config (0 = no tabs, legacy single-view behavior) */
+    int                    tab_count;
+    ph_dashboard_tab_cfg_t tabs[PH_DASHBOARD_MAX_TABS];
 } ph_dashboard_panel_cfg_t;
 
 /* ---- dashboard configuration ---- */
@@ -65,6 +78,9 @@ typedef struct {
     const char                *status_text;
     int                        info_count;
     ph_dashboard_info_line_t   info_lines[PH_DASHBOARD_MAX_INFO_LINES];
+    /* borrowed pointers for start/stop lifecycle (both may be NULL) */
+    const ph_serve_config_t   *serve_cfg;
+    ph_serve_session_t       **session_ptr;
 } ph_dashboard_config_t;
 
 /* ---- opaque dashboard handle ---- */

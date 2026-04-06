@@ -51,6 +51,7 @@ phosphor_sources = files(
   'src/core/color.c',
   'src/core/term.c',
   'src/core/regex.c',
+  'src/core/json.c',
   # io
   'src/io/fs_readwrite.c',
   'src/io/fs_copytree.c',
@@ -89,8 +90,21 @@ phosphor_sources = files(
   'src/serve/serve.c',
   # dashboard
   'src/dashboard/dashboard.c',
+  'src/dashboard/db_ring.c',
+  'src/dashboard/db_layout.c',
+  'src/dashboard/db_draw.c',
+  'src/dashboard/db_popup.c',
+  'src/dashboard/db_evt_pipe.c',
+  'src/dashboard/db_evt_signal.c',
+  'src/dashboard/db_evt_child.c',
+  'src/dashboard/db_evt_key.c',
+  'src/dashboard/db_evt_tick.c',
+  'src/dashboard/db_event.c',
+  'src/dashboard/db_lifecycle.c',
+  'src/dashboard/db_fuzzy.c',
+  'src/dashboard/db_json_fold.c',
+  'src/dashboard/db_shell.c',
   # certs
-  'src/certs/acme_json.c',
   'src/certs/certs_config.c',
   'src/certs/certs_san.c',
   'src/certs/certs_ca.c',
@@ -263,6 +277,20 @@ if host_machine.system() == 'linux'
   phosphor_deps += cc.find_library('pthread', required : false)
   phosphor_deps += cc.find_library('dl', required : false)
 endif
+
+# cJSON: JSON parsing for ACME + dashboard log export
+cjson_opts = cmake.subproject_options()
+cjson_opts.add_cmake_defines({
+  'ENABLE_CJSON_TEST':     false,
+  'BUILD_SHARED_LIBS':     false,
+  'BUILD_SHARED_AND_STATIC_LIBS': false,
+  'CJSON_BUILD_SHARED_LIBS': false,
+})
+cjson_opts.set_install(false)
+cjson_sub = cmake.subproject('cjson', options : cjson_opts)
+cjson_dep = cjson_sub.dependency('cjson')
+phosphor_c_args += '-DPHOSPHOR_HAS_CJSON=1'
+phosphor_deps += cjson_dep
 
 # ncurses: serve dashboard TUI
 if get_option('dashboard')

@@ -1,624 +1,14 @@
 #ifdef PHOSPHOR_HAS_NCURSES
 
-#include "phosphor/dashboard.h"
+#include "db_types.h"
 #include "phosphor/alloc.h"
 #include "phosphor/log.h"
 #include "phosphor/signal.h"
 
-#include <curses.h>
-#include <errno.h>
 #include <locale.h>
-#include <poll.h>
-#include <signal.h>
 #include <string.h>
-#include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
-
-/* ---- constants ---- */
-
-#define MAX_LINES       2000    /* ring buffer capacity per panel */
-#define MAX_LINE_LEN    4096    /* max bytes per output line */
-#define POLL_TIMEOUT_MS 100
-#define MAX_FDS         (PH_DASHBOARD_MAX_PANELS * 2 + 1) /* stdout+stderr + signal pipe */
-
-/* ---- color pairs ---- */
-
-enum {
-    CP_BORDER_NORMAL  = 1,
-    CP_BORDER_FOCUSED = 2,
-    CP_TITLE_NS       = 3,
-    CP_TITLE_REDIR    = 4,
-    CP_TITLE_WATCH    = 5,
-    CP_STATUS_RUN     = 6,
-    CP_STATUS_EXIT    = 7,
-    CP_LOG_STDERR     = 8,
-    CP_STATUSBAR      = 9,
-    CP_TITLE_BG       = 10,
-    CP_INFO_LABEL     = 11,
-    CP_INFO_CYAN      = 12,
-    CP_INFO_GREEN     = 13,
-    CP_INFO_YELLOW    = 14,
-    CP_INFO_RED       = 15,
-    CP_INFO_DIM       = 16,
-    CP_INFO_BOX       = 17,
-    /* ANSI foreground colors: pair 20+i where i=0..7 maps to COLOR_i */
-    CP_ANSI_BASE      = 20,
-};
-
-/* ---- UTF-8 helper ---- */
-
-static int utf8_seq_len(unsigned char c) {
-    if (c < 0x80)            return 1;
-    if ((c & 0xE0) == 0xC0)  return 2;
-    if ((c & 0xF0) == 0xE0)  return 3;
-    if ((c & 0xF8) == 0xF0)  return 4;
-    return 0;
-}
-
-/* ---- line cleaner ---- */
-
-/*
- * clean_line -- clean a raw line for dashboard storage.
- * preserves SGR sequences (\033[...m) and valid UTF-8.
- * strips OSC, non-SGR CSI sequences, and non-printable bytes.
- * writes to dst (must be >= srclen+1). returns byte length.
- * sets *vis_width to the visual column count (excluding escape bytes).
- */
-static int clean_line(char *dst, int *vis_width, const char *src, int srclen) {
-    int d = 0;
-    int vw = 0;
-    for (int i = 0; i < srclen; ) {
-        unsigned char c = (unsigned char)src[i];
-
-        if (src[i] == '\033') {
-            if (i + 1 < srclen && src[i+1] == '[') {
-                /* CSI -- check if it ends with 'm' (SGR) */
-                int start = i;
-                int j = i + 2;
-                while (j < srclen && (unsigned char)src[j] < 0x40)
-                    j++;
-                if (j < srclen && src[j] == 'm') {
-                    /* SGR -- keep it */
-                    int slen = j + 1 - start;
-                    memcpy(dst + d, src + start, (size_t)slen);
-                    d += slen;
-                    i = j + 1;
-                } else {
-                    /* non-SGR CSI -- strip */
-                    i = (j < srclen) ? j + 1 : srclen;
-                }
-            } else if (i + 1 < srclen && src[i+1] == ']') {
-                /* OSC -- strip until ST or BEL */
-                i += 2;
-                while (i < srclen) {
-                    if (src[i] == '\007') { i++; break; }
-                    if (src[i] == '\033' && i + 1 < srclen && src[i+1] == '\\') {
-                        i += 2; break;
-                    }
-                    i++;
-                }
-            } else {
-                /* other ESC -- skip ESC + one char */
-                i += 2;
-                if (i > srclen) i = srclen;
-            }
-        } else if (c >= 0x80) {
-            /* multi-byte UTF-8 */
-            int slen = utf8_seq_len(c);
-            if (slen >= 2 && i + slen <= srclen) {
-                bool valid = true;
-                for (int k = 1; k < slen; k++) {
-                    if (((unsigned char)src[i+k] & 0xC0) != 0x80) {
-                        valid = false;
-                        break;
-                    }
-                }
-                if (valid) {
-                    memcpy(dst + d, src + i, (size_t)slen);
-                    d += slen;
-                    vw++;
-                    i += slen;
-                } else {
-                    i++;
-                }
-            } else {
-                i++;
-            }
-        } else if (c >= 0x20 || c == '\t') {
-            dst[d++] = src[i++];
-            vw++;
-        } else {
-            i++;
-        }
-    }
-    dst[d] = '\0';
-    *vis_width = vw;
-    return d;
-}
-
-/* ---- line entry ---- */
-
-typedef struct {
-    char *text;
-    int   len;
-    int   vis_width;
-    bool  is_stderr;
-} db_line_t;
-
-/* ---- ring buffer ---- */
-
-typedef struct {
-    db_line_t  lines[MAX_LINES];
-    int        head;
-    int        count;
-} db_ringbuf_t;
-
-static void ringbuf_push(db_ringbuf_t *rb, const char *text, int len,
-                          bool is_stderr) {
-    int idx = (rb->head + rb->count) % MAX_LINES;
-    if (rb->count == MAX_LINES) {
-        ph_free(rb->lines[rb->head].text);
-        rb->head = (rb->head + 1) % MAX_LINES;
-    } else {
-        rb->count++;
-    }
-    char *tmp = ph_alloc((size_t)len + 1);
-    if (tmp) {
-        int vis_w = 0;
-        int clean_len = clean_line(tmp, &vis_w, text, len);
-        rb->lines[idx].text = tmp;
-        rb->lines[idx].len = clean_len;
-        rb->lines[idx].vis_width = vis_w;
-    } else {
-        rb->lines[idx].text = NULL;
-        rb->lines[idx].len = 0;
-        rb->lines[idx].vis_width = 0;
-    }
-    rb->lines[idx].is_stderr = is_stderr;
-}
-
-static void ringbuf_destroy(db_ringbuf_t *rb) {
-    for (int i = 0; i < rb->count; i++) {
-        int idx = (rb->head + i) % MAX_LINES;
-        ph_free(rb->lines[idx].text);
-    }
-    rb->head = 0;
-    rb->count = 0;
-}
-
-static db_line_t *ringbuf_get(db_ringbuf_t *rb, int i) {
-    if (i < 0 || i >= rb->count) return NULL;
-    return &rb->lines[(rb->head + i) % MAX_LINES];
-}
-
-/* ---- line accumulator ---- */
-
-typedef struct {
-    char  buf[MAX_LINE_LEN];
-    int   pos;
-} db_accum_t;
-
-/* ---- panel state ---- */
-
-typedef enum {
-    PANEL_RUNNING,
-    PANEL_EXITED,
-} db_panel_status_t;
-
-typedef struct {
-    const char         *name;
-    ph_dashboard_panel_id_t id;
-    pid_t               pid;
-    int                 stdout_fd;
-    int                 stderr_fd;
-    db_panel_status_t   status;
-    int                 exit_code;
-    db_ringbuf_t        ring;
-    db_accum_t          out_acc;
-    db_accum_t          err_acc;
-    int                 scroll;   /* offset from bottom; 0 = auto-follow */
-    WINDOW             *win;
-} db_panel_t;
-
-/* ---- dashboard ---- */
-
-struct ph_dashboard {
-    int         panel_count;
-    db_panel_t  panels[PH_DASHBOARD_MAX_PANELS];
-    int         focused;
-    int         alive;
-    const char *status_text;
-    bool        quit;
-    /* info box */
-    int                      info_count;
-    ph_dashboard_info_line_t info_lines[PH_DASHBOARD_MAX_INFO_LINES];
-    WINDOW                  *info_win;
-    /* command line */
-    bool  cmd_active;
-    char  cmd_buf[256];
-    int   cmd_len;
-    char  cmd_msg[256];
-    int   cmd_msg_frames;
-};
-
-/* ---- ANSI color rendering ---- */
-
-/*
- * render_line -- render a stored line (with embedded SGR codes) to an
- * ncurses window. parses SGR sequences and maps them to ncurses color
- * attributes. stops at max_cols visual columns.
- */
-static void render_line(WINDOW *win, int y, int x,
-                        const char *text, int len,
-                        int max_cols, bool is_stderr) {
-    int col = 0;
-    int base_attr = is_stderr ? (int)COLOR_PAIR(CP_LOG_STDERR) : 0;
-    int cur_attr = base_attr;
-
-    wmove(win, y, x);
-    wattrset(win, cur_attr);
-
-    int i = 0;
-    while (i < len && col < max_cols) {
-        if (text[i] == '\033' && i + 1 < len && text[i+1] == '[') {
-            /* parse SGR parameters */
-            i += 2;
-            int params[16];
-            int np = 0;
-            int val = 0;
-            bool has_val = false;
-
-            while (i < len && (unsigned char)text[i] < 0x40) {
-                if (text[i] >= '0' && text[i] <= '9') {
-                    val = val * 10 + (text[i] - '0');
-                    has_val = true;
-                } else if (text[i] == ';') {
-                    if (np < 16) params[np++] = has_val ? val : 0;
-                    val = 0;
-                    has_val = false;
-                }
-                i++;
-            }
-            if (has_val && np < 16) params[np++] = val;
-            if (i < len) i++; /* skip 'm' */
-
-            /* apply SGR codes */
-            for (int p = 0; p < np; p++) {
-                int code = params[p];
-                if (code == 0) {
-                    cur_attr = base_attr;
-                } else if (code == 1) {
-                    cur_attr |= A_BOLD;
-                } else if (code == 2) {
-                    cur_attr |= A_DIM;
-                } else if (code == 4) {
-                    cur_attr |= A_UNDERLINE;
-                } else if (code == 22) {
-                    cur_attr &= ~(A_BOLD | A_DIM);
-                } else if (code >= 30 && code <= 37) {
-                    cur_attr = (cur_attr & ~((int)A_COLOR))
-                             | (int)COLOR_PAIR(CP_ANSI_BASE + code - 30);
-                } else if (code == 39) {
-                    cur_attr = (cur_attr & ~((int)A_COLOR)) | base_attr;
-                } else if (code >= 90 && code <= 97) {
-                    cur_attr = (cur_attr & ~((int)A_COLOR))
-                             | (int)COLOR_PAIR(CP_ANSI_BASE + code - 90)
-                             | A_BOLD;
-                }
-                /* ignore 256-color (38;5;X) and truecolor (38;2;R;G;B) */
-            }
-            wattrset(win, cur_attr);
-        } else {
-            unsigned char c = (unsigned char)text[i];
-            if (c >= 0x80) {
-                /* UTF-8 multi-byte -- use waddnstr for proper handling */
-                int slen = utf8_seq_len(c);
-                if (slen >= 2 && i + slen <= len) {
-                    waddnstr(win, text + i, slen);
-                    i += slen;
-                    col++;
-                } else {
-                    i++;
-                }
-            } else if (c >= 0x20 || c == '\t') {
-                waddch(win, (chtype)c);
-                i++;
-                col++;
-            } else {
-                i++;
-            }
-        }
-    }
-
-    wattrset(win, A_NORMAL);
-}
-
-/* ---- layout ---- */
-
-static void layout_panels(ph_dashboard_t *db) {
-    int rows, cols;
-    getmaxyx(stdscr, rows, cols);
-
-    /* info box */
-    int info_h = 0;
-    if (db->info_count > 0)
-        info_h = db->info_count + 2;
-
-    if (info_h > 0) {
-        if (db->info_win) delwin(db->info_win);
-        db->info_win = newwin(info_h, cols, 0, 0);
-    }
-
-    int active = db->panel_count;
-    if (active <= 0) return;
-
-    int panel_start = info_h;
-    int avail_rows = rows - info_h - 1; /* -1 for status bar */
-    if (avail_rows < 3) avail_rows = 3;
-
-    if (cols >= 40 * active) {
-        /* side by side */
-        int pw = cols / active;
-        for (int i = 0; i < active; i++) {
-            if (db->panels[i].win) delwin(db->panels[i].win);
-            int w = (i == active - 1) ? (cols - pw * i) : pw;
-            db->panels[i].win = newwin(avail_rows, w, panel_start, pw * i);
-        }
-    } else {
-        /* stacked vertically */
-        int ph = avail_rows / active;
-        for (int i = 0; i < active; i++) {
-            if (db->panels[i].win) delwin(db->panels[i].win);
-            int h = (i == active - 1) ? (avail_rows - ph * i) : ph;
-            db->panels[i].win = newwin(h, cols, panel_start + ph * i, 0);
-        }
-    }
-}
-
-/* ---- drawing ---- */
-
-static int title_color(ph_dashboard_panel_id_t id) {
-    switch (id) {
-    case PH_PANEL_NEONSIGNAL: return CP_TITLE_NS;
-    case PH_PANEL_REDIRECT:   return CP_TITLE_REDIR;
-    case PH_PANEL_WATCHER:    return CP_TITLE_WATCH;
-    }
-    return CP_TITLE_NS;
-}
-
-static void draw_info_box(ph_dashboard_t *db) {
-    if (!db->info_win || db->info_count <= 0) return;
-
-    int rows, cols;
-    getmaxyx(db->info_win, rows, cols);
-    (void)rows;
-    werase(db->info_win);
-
-    /* border */
-    wattron(db->info_win, COLOR_PAIR(CP_INFO_BOX));
-    box(db->info_win, 0, 0);
-    wattroff(db->info_win, COLOR_PAIR(CP_INFO_BOX));
-
-    /* title */
-    wattron(db->info_win, COLOR_PAIR(CP_TITLE_NS) | A_BOLD);
-    mvwprintw(db->info_win, 0, 2, " phosphor serve ");
-    wattroff(db->info_win, COLOR_PAIR(CP_TITLE_NS) | A_BOLD);
-
-    /* info lines */
-    int label_w = 10;
-    for (int i = 0; i < db->info_count && i + 1 < rows - 1; i++) {
-        const ph_dashboard_info_line_t *line = &db->info_lines[i];
-
-        /* label (dim) */
-        wattron(db->info_win, COLOR_PAIR(CP_INFO_LABEL) | A_DIM);
-        mvwprintw(db->info_win, i + 1, 2, "%-*s", label_w,
-                  line->label ? line->label : "");
-        wattroff(db->info_win, COLOR_PAIR(CP_INFO_LABEL) | A_DIM);
-
-        /* value (colored) */
-        int cp = 0;
-        int extra = 0;
-        switch (line->color) {
-        case PH_INFO_CYAN:   cp = CP_INFO_CYAN;   break;
-        case PH_INFO_GREEN:  cp = CP_INFO_GREEN;   break;
-        case PH_INFO_YELLOW: cp = CP_INFO_YELLOW;  break;
-        case PH_INFO_RED:    cp = CP_INFO_RED;     break;
-        case PH_INFO_DIM:    cp = CP_INFO_DIM; extra = A_DIM; break;
-        case PH_INFO_WHITE:  cp = CP_BORDER_NORMAL; break;
-        }
-
-        wattron(db->info_win, COLOR_PAIR(cp) | extra);
-        /* truncate value to fit in window */
-        int max_val = cols - label_w - 4;
-        if (line->value) {
-            int vlen = (int)strlen(line->value);
-            if (vlen > max_val) vlen = max_val;
-            waddnstr(db->info_win, line->value, vlen);
-        }
-        wattroff(db->info_win, COLOR_PAIR(cp) | extra);
-    }
-
-    wnoutrefresh(db->info_win);
-}
-
-static void draw_panel(ph_dashboard_t *db, int idx) {
-    db_panel_t *p = &db->panels[idx];
-    if (!p->win) return;
-
-    int rows, cols;
-    getmaxyx(p->win, rows, cols);
-    werase(p->win);
-
-    /* border */
-    int border_cp = (idx == db->focused) ? CP_BORDER_FOCUSED : CP_BORDER_NORMAL;
-    wattron(p->win, COLOR_PAIR(border_cp));
-    box(p->win, 0, 0);
-    wattroff(p->win, COLOR_PAIR(border_cp));
-
-    /* title bar */
-    int tcol = title_color(p->id);
-    wattron(p->win, COLOR_PAIR(tcol) | A_BOLD);
-    mvwprintw(p->win, 0, 2, " %s ", p->name);
-    wattroff(p->win, COLOR_PAIR(tcol) | A_BOLD);
-
-    /* status indicator */
-    if (p->status == PANEL_RUNNING) {
-        wattron(p->win, COLOR_PAIR(CP_STATUS_RUN) | A_BOLD);
-        mvwprintw(p->win, 0, cols - 12, " running ");
-        wattroff(p->win, COLOR_PAIR(CP_STATUS_RUN) | A_BOLD);
-    } else {
-        wattron(p->win, COLOR_PAIR(CP_STATUS_EXIT) | A_BOLD);
-        mvwprintw(p->win, 0, cols - 14, " exit: %d ", p->exit_code);
-        wattroff(p->win, COLOR_PAIR(CP_STATUS_EXIT) | A_BOLD);
-    }
-
-    /* log content area */
-    int content_h = rows - 2;
-    int content_w = cols - 2;
-    if (content_h <= 0 || content_w <= 0) {
-        wnoutrefresh(p->win);
-        return;
-    }
-
-    /* visible range from ring buffer */
-    int total = p->ring.count;
-    int start;
-    if (p->scroll == 0) {
-        start = total - content_h;
-        if (start < 0) start = 0;
-    } else {
-        start = total - content_h - p->scroll;
-        if (start < 0) start = 0;
-    }
-
-    for (int r = 0; r < content_h; r++) {
-        int li = start + r;
-        if (li < 0 || li >= total) continue;
-        db_line_t *line = ringbuf_get(&p->ring, li);
-        if (!line || !line->text) continue;
-
-        render_line(p->win, r + 1, 1, line->text, line->len,
-                    content_w, line->is_stderr);
-    }
-
-    wnoutrefresh(p->win);
-}
-
-static void draw_status_bar(ph_dashboard_t *db) {
-    int rows, cols;
-    getmaxyx(stdscr, rows, cols);
-
-    move(rows - 1, 0);
-    clrtoeol();
-
-    attron(COLOR_PAIR(CP_STATUSBAR));
-
-    if (db->cmd_active) {
-        /* command entry: ":" + buffer text */
-        mvprintw(rows - 1, 0, ":%.*s", db->cmd_len, db->cmd_buf);
-
-        /* block cursor at the insertion point */
-        int cur_col = 1 + db->cmd_len;
-        if (cur_col < cols) {
-            attron(A_REVERSE);
-            mvaddch(rows - 1, cur_col, ' ');
-            attroff(A_REVERSE);
-        }
-
-        const char *hint = "Esc:cancel  Enter:execute";
-        int hlen = (int)strlen(hint);
-        if (cols - hlen - 2 > 0)
-            mvprintw(rows - 1, cols - hlen - 1, "%s", hint);
-    } else {
-        /* normal mode: show command message (timed) or static status text */
-        const char *left = (db->cmd_msg_frames > 0) ? db->cmd_msg
-                                                     : db->status_text;
-        if (left)
-            mvprintw(rows - 1, 1, "%s", left);
-
-        const char *keys = "q:quit  Tab:focus  Up/Down:scroll  ::cmd";
-        int klen = (int)strlen(keys);
-        if (cols - klen - 2 > 0)
-            mvprintw(rows - 1, cols - klen - 1, "%s", keys);
-    }
-
-    for (int c = getcurx(stdscr); c < cols; c++)
-        addch(' ');
-
-    attroff(COLOR_PAIR(CP_STATUSBAR));
-    wnoutrefresh(stdscr);
-}
-
-/* ---- command dispatch ---- */
-
-static void dispatch_cmd(ph_dashboard_t *db) {
-    /* skip leading whitespace */
-    const char *s = db->cmd_buf;
-    while (*s == ' ') s++;
-
-    if (*s == '\0') return;  /* empty command */
-
-    if (strncmp(s, "filament", 8) == 0 && (s[8] == '\0' || s[8] == ' ')) {
-        snprintf(db->cmd_msg, sizeof(db->cmd_msg),
-                 "filament: not yet implemented");
-        db->cmd_msg_frames = 40;
-    } else {
-        snprintf(db->cmd_msg, sizeof(db->cmd_msg),
-                 "E492: Not an editor command: %s", s);
-        db->cmd_msg_frames = 30;
-    }
-}
-
-static void draw_all(ph_dashboard_t *db) {
-    /* tick down the command message display */
-    if (db->cmd_msg_frames > 0)
-        db->cmd_msg_frames--;
-
-    draw_info_box(db);
-    for (int i = 0; i < db->panel_count; i++)
-        draw_panel(db, i);
-    draw_status_bar(db);
-    doupdate();
-}
-
-/* ---- pipe reading ---- */
-
-static void feed_accum(db_accum_t *acc, db_ringbuf_t *ring,
-                       const char *buf, int n, bool is_stderr) {
-    for (int i = 0; i < n; i++) {
-        if (buf[i] == '\n' || buf[i] == '\r') {
-            if (acc->pos > 0) {
-                ringbuf_push(ring, acc->buf, acc->pos, is_stderr);
-                acc->pos = 0;
-            }
-        } else {
-            if (acc->pos < MAX_LINE_LEN - 1)
-                acc->buf[acc->pos++] = buf[i];
-        }
-    }
-}
-
-/* ---- event loop ---- */
-
-static void reap_children(ph_dashboard_t *db) {
-    for (int i = 0; i < db->panel_count; i++) {
-        db_panel_t *p = &db->panels[i];
-        if (p->pid <= 0 || p->status != PANEL_RUNNING) continue;
-
-        int status;
-        pid_t r = waitpid(p->pid, &status, WNOHANG);
-        if (r <= 0) continue;
-
-        if (WIFEXITED(status))
-            p->exit_code = WEXITSTATUS(status);
-        else if (WIFSIGNALED(status))
-            p->exit_code = 128 + WTERMSIG(status);
-
-        p->status = PANEL_EXITED;
-        p->pid = 0;
-        db->alive--;
-    }
-}
 
 /* ---- public API ---- */
 
@@ -635,6 +25,30 @@ ph_result_t ph_dashboard_create(const ph_dashboard_config_t *cfg,
     db->status_text = cfg->status_text;
     db->quit = false;
     db->info_win = NULL;
+    db->popup_win = NULL;
+    db->mode = DB_MODE_NORMAL;
+    db->popup = DB_POPUP_NONE;
+    db->btn_selected = DB_BTN_NONE;
+    db->btn_flash = 0;
+    db->zoomed = false;
+    db->search_active = false;
+    db->search_pat[0] = '\0';
+    db->search_buf[0] = '\0';
+    db->search_len = 0;
+    db->jv_nodes = NULL;
+    db->jv_node_count = 0;
+    db->jv_cursor = 0;
+    db->jv_scroll = 0;
+    db->jv_title[0] = '\0';
+    db->shell_open = false;
+    db->shell_height = DB_SHELL_DEFAULT_H;
+    db->shell_view_count = 0;
+    db->shell_active_view = 0;
+    db->shell_win = NULL;
+
+    /* borrowed pointers for start/stop lifecycle */
+    db->serve_cfg = cfg->serve_cfg;
+    db->session_ptr = cfg->session_ptr;
 
     /* copy info lines */
     db->info_count = cfg->info_count;
@@ -651,21 +65,64 @@ ph_result_t ph_dashboard_create(const ph_dashboard_config_t *cfg,
                                                           : PANEL_EXITED;
         db->panels[i].exit_code = 0;
         db->panels[i].scroll = 0;
+        db->panels[i].cursor = -1;
+        db->panels[i].sel_anchor = -1;
+        db->panels[i].json_fold_idx = -1;
+        db->panels[i].json_fold_text = NULL;
+        db->panels[i].json_fold_lines = 0;
         db->panels[i].win = NULL;
         memset(&db->panels[i].ring, 0, sizeof(db_ringbuf_t));
         memset(&db->panels[i].out_acc, 0, sizeof(db_accum_t));
         memset(&db->panels[i].err_acc, 0, sizeof(db_accum_t));
+
+        /* tab init */
+        int tc = cfg->panels[i].tab_count;
+        if (tc > DB_MAX_TABS) tc = DB_MAX_TABS;
+        db->panels[i].tab_count = tc;
+        db->panels[i].active_tab = 0;
+        for (int t = 0; t < tc; t++) {
+            db_tab_t *tab = &db->panels[i].tabs[t];
+            const char *tname = cfg->panels[i].tabs[t].name;
+            if (tname) {
+                strncpy(tab->name, tname, DB_TAB_NAME_LEN - 1);
+                tab->name[DB_TAB_NAME_LEN - 1] = '\0';
+            } else {
+                tab->name[0] = '\0';
+            }
+            tab->source = (db_tab_source_t)cfg->panels[i].tabs[t].source_stream;
+            memset(&tab->ring, 0, sizeof(db_ringbuf_t));
+            tab->scroll = 0;
+            tab->cursor = -1;
+            tab->sel_anchor = -1;
+            tab->json_fold_idx = -1;
+            tab->json_fold_text = NULL;
+            tab->json_fold_lines = 0;
+        }
+
         if (cfg->panels[i].pid > 0) db->alive++;
     }
 
     /* init ncurses */
     setlocale(LC_ALL, "");
+    set_escdelay(25);  /* 25ms: long enough for escape sequences, short for Esc key */
     initscr();
     cbreak();
     noecho();
     nodelay(stdscr, TRUE);
     keypad(stdscr, TRUE);
     curs_set(0);
+
+    /* register xterm Shift+arrow sequences for multi-select */
+    define_key("\033[1;2A", KEY_SR);   /* Shift+Up */
+    define_key("\033[1;2B", KEY_SF);   /* Shift+Down */
+
+
+
+    /* disable XON/XOFF so Ctrl-S reaches the application */
+    struct termios t;
+    tcgetattr(STDIN_FILENO, &t);
+    t.c_iflag &= ~(tcflag_t)(IXON | IXOFF);
+    tcsetattr(STDIN_FILENO, TCSANOW, &t);
 
     if (has_colors()) {
         start_color();
@@ -700,6 +157,53 @@ ph_result_t ph_dashboard_create(const ph_dashboard_config_t *cfg,
         init_pair(CP_ANSI_BASE + 5,  COLOR_MAGENTA, -1);
         init_pair(CP_ANSI_BASE + 6,  COLOR_CYAN,    -1);
         init_pair(CP_ANSI_BASE + 7,  COLOR_WHITE,   -1);
+
+        /* button colors */
+        init_pair(CP_BTN_START_ACTIVE, COLOR_WHITE,  COLOR_GREEN);
+        init_pair(CP_BTN_STOP_ACTIVE,  COLOR_WHITE,  COLOR_RED);
+        init_pair(CP_BTN_DISABLED,     COLOR_WHITE,  COLOR_BLACK);
+        init_pair(CP_BTN_SELECTED,     COLOR_BLACK,  COLOR_WHITE);
+
+        /* popup colors */
+        init_pair(CP_POPUP_BORDER,     COLOR_CYAN,   -1);
+        init_pair(CP_POPUP_TEXT,       COLOR_WHITE,  -1);
+        init_pair(CP_POPUP_KEY,        COLOR_GREEN,  -1);
+
+        /* brand symbol badge (green on black) */
+        init_pair(CP_SYMBOL,           COLOR_GREEN,  COLOR_BLACK);
+
+        /* info box title */
+        init_pair(CP_TITLE_SERVE,      COLOR_BLACK,  COLOR_MAGENTA);
+
+        /* search highlight */
+        init_pair(CP_SEARCH_MATCH,     COLOR_BLACK,  COLOR_YELLOW);
+
+        /* cursor + selection */
+        init_pair(CP_CURSOR_LINE,      COLOR_BLACK,  COLOR_WHITE);
+        init_pair(CP_SELECTED_LINE,    COLOR_WHITE,  COLOR_BLUE);
+
+        /* fuzzy finder */
+        init_pair(CP_FUZZY_MATCH,      COLOR_GREEN,  -1);
+        init_pair(CP_FUZZY_PROMPT,     COLOR_CYAN,   -1);
+
+        /* json fold syntax */
+        init_pair(CP_JSON_KEY,         COLOR_CYAN,   -1);
+        init_pair(CP_JSON_STRING,      COLOR_GREEN,  -1);
+        init_pair(CP_JSON_NUMBER,      COLOR_YELLOW, -1);
+        init_pair(CP_JSON_BOOL,        COLOR_MAGENTA,-1);
+
+        /* panel tabs */
+        init_pair(CP_TAB_ACTIVE,       COLOR_WHITE,  -1);
+        init_pair(CP_TAB_INACTIVE,     COLOR_WHITE,  -1);
+
+        /* shell */
+        init_pair(CP_SHELL_BORDER,       COLOR_CYAN,   -1);
+        init_pair(CP_SHELL_INPUT,        COLOR_WHITE,  -1);
+        init_pair(CP_SHELL_PROMPT,       COLOR_GREEN,  -1);
+        init_pair(CP_SHELL_TAB_ACTIVE,   COLOR_WHITE,  -1);
+        init_pair(CP_SHELL_TAB_INACTIVE, COLOR_WHITE,  -1);
+        init_pair(CP_SCREEN_BORDER,      COLOR_YELLOW, -1);
+        init_pair(CP_SCREEN_TITLE,       COLOR_WHITE,  -1);
     }
 
     /* install SIGWINCH handler */
@@ -715,211 +219,26 @@ ph_result_t ph_dashboard_create(const ph_dashboard_config_t *cfg,
 int ph_dashboard_run(ph_dashboard_t *db) {
     if (!db) return 1;
 
-    /* set up self-pipe for signal wakeup */
     int sig_fd = ph_signal_pipe_init();
-
     draw_all(db);
 
     while (!db->quit) {
-        /* build poll fd set */
-        struct pollfd fds[MAX_FDS];
-        int nfds = 0;
+        db_event_t events[MAX_EVENTS];
+        int nevents = 0;
 
-        int fd_panel[MAX_FDS];
-        int fd_stderr[MAX_FDS];
+        collect_events(db, events, &nevents, sig_fd);
 
-        for (int i = 0; i < db->panel_count; i++) {
-            db_panel_t *p = &db->panels[i];
-            if (p->stdout_fd >= 0) {
-                fd_panel[nfds] = i;
-                fd_stderr[nfds] = 0;
-                fds[nfds].fd = p->stdout_fd;
-                fds[nfds].events = POLLIN;
-                fds[nfds].revents = 0;
-                nfds++;
-            }
-            if (p->stderr_fd >= 0) {
-                fd_panel[nfds] = i;
-                fd_stderr[nfds] = 1;
-                fds[nfds].fd = p->stderr_fd;
-                fds[nfds].events = POLLIN;
-                fds[nfds].revents = 0;
-                nfds++;
-            }
-        }
+        for (int i = 0; i < nevents; i++)
+            handle_event(db, &events[i]);
 
-        /* signal pipe */
-        int sig_idx = -1;
-        if (sig_fd >= 0) {
-            sig_idx = nfds;
-            fds[nfds].fd = sig_fd;
-            fds[nfds].events = POLLIN;
-            fds[nfds].revents = 0;
-            nfds++;
-        }
-
-        int pr = poll(fds, (nfds_t)nfds, POLL_TIMEOUT_MS);
-
-        /* drain signal pipe (non-blocking) */
-        if (sig_idx >= 0 && (pr > 0 && (fds[sig_idx].revents & POLLIN)))
-            ph_signal_pipe_drain();
-
-        /* check signal flags -- always, because poll may return EINTR
-         * on SIGWINCH/SIGINT without setting revents */
-        if (pr == -1 && errno == EINTR)
-            ph_signal_pipe_drain();
-
-        if (ph_signal_interrupted()) {
-            db->quit = true;
-            continue;
-        }
-
-        if (ph_signal_winch_pending()) {
-            ph_signal_winch_clear();
-            endwin();
-            refresh();
-            layout_panels(db);
-            draw_all(db);
-            continue;
-        }
-
-        /* read pipe data */
-        for (int f = 0; f < nfds; f++) {
-            if (f == sig_idx) continue;
-            if (!(fds[f].revents & (POLLIN | POLLHUP))) continue;
-
-            char buf[4096];
-            ssize_t n = read(fds[f].fd, buf, sizeof(buf));
-            if (n > 0) {
-                int pi = fd_panel[f];
-                bool is_err = fd_stderr[f];
-                db_accum_t *acc = is_err ? &db->panels[pi].err_acc
-                                          : &db->panels[pi].out_acc;
-                feed_accum(acc, &db->panels[pi].ring, buf, (int)n, is_err);
-            } else if (n == 0) {
-                int pi = fd_panel[f];
-                if (fd_stderr[f])
-                    db->panels[pi].stderr_fd = -1;
-                else
-                    db->panels[pi].stdout_fd = -1;
-                close(fds[f].fd);
-            }
-        }
-
-        /* reap children */
-        reap_children(db);
-
-        /* handle keyboard */
-        int ch;
-        while ((ch = getch()) != ERR) {
-            if (db->cmd_active) {
-                /* command input mode -- all keys go to the command line */
-                if (ch == 27) { /* Esc */
-                    db->cmd_active = false;
-                    db->cmd_len = 0;
-                    db->cmd_buf[0] = '\0';
-                } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
-                    db->cmd_buf[db->cmd_len] = '\0';
-                    dispatch_cmd(db);
-                    db->cmd_active = false;
-                    db->cmd_len = 0;
-                    db->cmd_buf[0] = '\0';
-                } else if ((ch == KEY_BACKSPACE || ch == 127 || ch == '\b')
-                           && db->cmd_len > 0) {
-                    db->cmd_buf[--db->cmd_len] = '\0';
-                } else if (ch >= 0x20 && ch < 0x7f && db->cmd_len < 254) {
-                    db->cmd_buf[db->cmd_len++] = (char)ch;
-                    db->cmd_buf[db->cmd_len]   = '\0';
-                }
-                continue;
-            }
-
-            /* normal mode */
-            switch (ch) {
-            case ':':
-                db->cmd_active = true;
-                db->cmd_len = 0;
-                db->cmd_buf[0] = '\0';
-                break;
-            case 'q':
-            case 'Q':
-                db->quit = true;
-                break;
-            case '\t':
-                db->focused = (db->focused + 1) % db->panel_count;
-                break;
-            case KEY_UP:
-            case 'k':
-                db->panels[db->focused].scroll++;
-                if (db->panels[db->focused].scroll > db->panels[db->focused].ring.count)
-                    db->panels[db->focused].scroll = db->panels[db->focused].ring.count;
-                break;
-            case KEY_DOWN:
-            case 'j':
-                db->panels[db->focused].scroll--;
-                if (db->panels[db->focused].scroll < 0)
-                    db->panels[db->focused].scroll = 0;
-                break;
-            case KEY_PPAGE:
-                db->panels[db->focused].scroll += 10;
-                if (db->panels[db->focused].scroll > db->panels[db->focused].ring.count)
-                    db->panels[db->focused].scroll = db->panels[db->focused].ring.count;
-                break;
-            case KEY_NPAGE:
-                db->panels[db->focused].scroll -= 10;
-                if (db->panels[db->focused].scroll < 0)
-                    db->panels[db->focused].scroll = 0;
-                break;
-            case KEY_HOME:
-                db->panels[db->focused].scroll = db->panels[db->focused].ring.count;
-                break;
-            case KEY_END:
-                db->panels[db->focused].scroll = 0;
-                break;
-            }
-        }
-
-        /* draw */
         draw_all(db);
 
-        /* auto-quit when all children exited and all fds closed */
-        if (db->alive == 0) {
-            bool any_open = false;
-            for (int i = 0; i < db->panel_count; i++) {
-                if (db->panels[i].stdout_fd >= 0 ||
-                    db->panels[i].stderr_fd >= 0) {
-                    any_open = true;
-                    break;
-                }
-            }
-            if (!any_open) db->quit = true;
-        }
+        /* auto-quit only when no restart is possible */
+        if (db->alive == 0 && !db->serve_cfg && !any_fd_open(db))
+            db->quit = true;
     }
 
-    /* send SIGTERM to any still-running children */
-    for (int i = 0; i < db->panel_count; i++) {
-        db_panel_t *p = &db->panels[i];
-        if (p->pid > 0 && p->status == PANEL_RUNNING) {
-            kill(-(p->pid), SIGTERM);
-        }
-    }
-
-    /* wait for children */
-    for (int i = 0; i < db->panel_count; i++) {
-        db_panel_t *p = &db->panels[i];
-        if (p->pid > 0) {
-            int status;
-            waitpid(p->pid, &status, 0);
-            if (WIFEXITED(status))
-                p->exit_code = WEXITSTATUS(status);
-            else if (WIFSIGNALED(status))
-                p->exit_code = 128 + WTERMSIG(status);
-            p->status = PANEL_EXITED;
-            p->pid = 0;
-        }
-    }
-
-    /* restore terminal */
+    shutdown_children(db);
     endwin();
 
     /* print shutdown summary to restored terminal */
@@ -932,27 +251,40 @@ int ph_dashboard_run(ph_dashboard_t *db) {
             ph_log_warn("serve: %s stopped (exit %d)", p->name, p->exit_code);
     }
 
-    /* compute worst exit code */
-    int worst = 0;
-    for (int i = 0; i < db->panel_count; i++) {
-        if (db->panels[i].exit_code > worst)
-            worst = db->panels[i].exit_code;
-    }
-
-    return worst;
+    return compute_worst_exit(db);
 }
 
 void ph_dashboard_destroy(ph_dashboard_t *db) {
     if (!db) return;
 
+    shell_close_all(db);
+    fuzzy_unload_disk(db);
+    if (db->jv_nodes) {
+        for (int i = 0; i < db->jv_node_count; i++) {
+            if (db->jv_nodes[i].key) ph_free(db->jv_nodes[i].key);
+            if (db->jv_nodes[i].value) ph_free(db->jv_nodes[i].value);
+        }
+        ph_free(db->jv_nodes);
+    }
     for (int i = 0; i < db->panel_count; i++) {
-        ringbuf_destroy(&db->panels[i].ring);
-        if (db->panels[i].win) delwin(db->panels[i].win);
-        if (db->panels[i].stdout_fd >= 0) close(db->panels[i].stdout_fd);
-        if (db->panels[i].stderr_fd >= 0) close(db->panels[i].stderr_fd);
+        db_panel_t *p = &db->panels[i];
+        if (p->tab_count > 0) {
+            for (int t = 0; t < p->tab_count; t++) {
+                db_tab_t *tab = &p->tabs[t];
+                ringbuf_destroy(&tab->ring);
+                if (tab->json_fold_text) { ph_free(tab->json_fold_text); tab->json_fold_text = NULL; }
+            }
+        } else {
+            json_fold_cleanup(p);
+            ringbuf_destroy(&p->ring);
+        }
+        if (p->win) delwin(p->win);
+        if (p->stdout_fd >= 0) close(p->stdout_fd);
+        if (p->stderr_fd >= 0) close(p->stderr_fd);
     }
 
     if (db->info_win) delwin(db->info_win);
+    if (db->popup_win) delwin(db->popup_win);
 
     ph_free(db);
 }
