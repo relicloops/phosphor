@@ -61,6 +61,11 @@ certs_root = "certs"
 augments_dir = "../../neonsignal/build/augments"
 grafts_dir = "../../neonsignal/build/grafts"
 watch = true
+enable_debug = true
+enable_log = true
+enable_log_color = true
+enable_file_log = true
+log_directory = "log"
 
 [serve.redirect]
 host = "10.0.0.142"
