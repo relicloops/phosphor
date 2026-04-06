@@ -7,7 +7,7 @@
 #include "phosphor/path.h"
 #include "phosphor/platform.h"
 #include "phosphor/signal.h"
-#include "acme_json.h"
+#include "phosphor/json.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -57,9 +57,11 @@ static ph_result_t find_http01_challenge(const char *auth_body,
     memcpy(obj, obj_start, obj_len);
     obj[obj_len] = '\0';
 
-    *out_token = json_extract_string(obj, "token");
-    *out_challenge_url = json_extract_string(obj, "url");
+    ph_json_t *obj_json = ph_json_parse(obj);
     ph_free(obj);
+    *out_token = ph_json_get_string(obj_json, "token");
+    *out_challenge_url = ph_json_get_string(obj_json, "url");
+    ph_json_destroy(obj_json);
 
     if (!*out_token || !*out_challenge_url) {
         ph_free(*out_token);
@@ -163,8 +165,10 @@ ph_result_t ph_acme_challenge_respond(const char *key_path,
         char *dir_body = NULL;
         if (ph_acme_http_get(directory_url,
                 &dir_body, NULL, NULL) == PH_OK) {
-            char *nonce_url_key = json_extract_string(dir_body, "newNonce");
+            ph_json_t *dir_json = ph_json_parse(dir_body);
             ph_free(dir_body);
+            char *nonce_url_key = ph_json_get_string(dir_json, "newNonce");
+            ph_json_destroy(dir_json);
             if (nonce_url_key) {
                 ph_acme_http_head(nonce_url_key, "Replay-Nonce", &nonce, NULL);
                 ph_free(nonce_url_key);
@@ -250,8 +254,10 @@ ph_result_t ph_acme_challenge_respond(const char *key_path,
             continue;
         }
 
-        char *status = json_extract_string(poll_body, "status");
+        ph_json_t *poll_json = ph_json_parse(poll_body);
         ph_free(poll_body);
+        char *status = ph_json_get_string(poll_json, "status");
+        ph_json_destroy(poll_json);
 
         if (status && strcmp(status, "valid") == 0) {
             ph_free(status);

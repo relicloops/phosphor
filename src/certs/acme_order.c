@@ -3,7 +3,7 @@
 #include "phosphor/certs.h"
 #include "phosphor/alloc.h"
 #include "phosphor/log.h"
-#include "acme_json.h"
+#include "phosphor/json.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -56,8 +56,10 @@ ph_result_t ph_acme_order_create(const char *key_path,
         ph_free(identifiers);
         return PH_ERR;
     }
-    char *nonce_url = json_extract_string(dir_body, "newNonce");
+    ph_json_t *dir_json = ph_json_parse(dir_body);
     ph_free(dir_body);
+    char *nonce_url = ph_json_get_string(dir_json, "newNonce");
+    ph_json_destroy(dir_json);
 
     if (nonce_url) {
         ph_acme_http_head(nonce_url, "Replay-Nonce", &nonce, NULL);
@@ -120,9 +122,11 @@ ph_result_t ph_acme_order_create(const char *key_path,
     }
 
     /* extract finalize URL and authorization URLs */
-    *out_finalize_url = json_extract_string(resp_body, "finalize");
-    *out_auth_urls = json_extract_string_array(resp_body, "authorizations",
-                                                 out_auth_count);
+    ph_json_t *resp_json = ph_json_parse(resp_body);
+    *out_finalize_url = ph_json_get_string(resp_json, "finalize");
+    *out_auth_urls = ph_json_get_string_array(resp_json, "authorizations",
+                                                out_auth_count);
+    ph_json_destroy(resp_json);
     /* order URL comes from Location header */
     *out_order_url = location;
 

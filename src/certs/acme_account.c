@@ -8,7 +8,7 @@
 #include "phosphor/platform.h"
 #include "phosphor/proc.h"
 
-#include "acme_json.h"
+#include "phosphor/json.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -87,9 +87,11 @@ ph_result_t ph_acme_account_register(const char *key_path,
         return PH_ERR;
     }
 
-    char *new_nonce_url = json_extract_string(dir_body, "newNonce");
-    char *new_account_url = json_extract_string(dir_body, "newAccount");
+    ph_json_t *dir_json = ph_json_parse(dir_body);
     ph_free(dir_body);
+    char *new_nonce_url = ph_json_get_string(dir_json, "newNonce");
+    char *new_account_url = ph_json_get_string(dir_json, "newAccount");
+    ph_json_destroy(dir_json);
 
     if (!new_nonce_url || !new_account_url) {
         ph_free(new_nonce_url);

@@ -9,7 +9,7 @@
 #include "phosphor/proc.h"
 #include "phosphor/signal.h"
 
-#include "acme_json.h"
+#include "phosphor/json.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -159,8 +159,10 @@ ph_result_t ph_acme_finalize(const char *key_path,
         char *dir_body = NULL;
         if (ph_acme_http_get(directory_url,
                 &dir_body, NULL, NULL) == PH_OK) {
-            char *nonce_url = json_extract_string(dir_body, "newNonce");
+            ph_json_t *dir_json = ph_json_parse(dir_body);
             ph_free(dir_body);
+            char *nonce_url = ph_json_get_string(dir_json, "newNonce");
+            ph_json_destroy(dir_json);
             if (nonce_url) {
                 ph_acme_http_head(nonce_url, "Replay-Nonce", &nonce, NULL);
                 ph_free(nonce_url);
@@ -246,15 +248,17 @@ ph_result_t ph_acme_finalize(const char *key_path,
                 continue;
         }
 
-        char *status = json_extract_string(order_body, "status");
+        ph_json_t *order_json = ph_json_parse(order_body);
+        ph_free(order_body);
+        char *status = ph_json_get_string(order_json, "status");
         if (status && strcmp(status, "valid") == 0) {
-            cert_url = json_extract_string(order_body, "certificate");
+            cert_url = ph_json_get_string(order_json, "certificate");
             ph_free(status);
-            ph_free(order_body);
+            ph_json_destroy(order_json);
             break;
         }
         ph_free(status);
-        ph_free(order_body);
+        ph_json_destroy(order_json);
     }
     ph_free(resp_body);
 
