@@ -8,7 +8,7 @@ set dotenv-load := true
 BUILD_DIR := "build"
 
 # Phosphor version from meson.build
-VERSION := "0.0.2-023"
+VERSION := "0.0.2-024"
 
 # Display available recipes
 [default]

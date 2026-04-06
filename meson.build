@@ -18,7 +18,7 @@ add_project_arguments('-D_POSIX_C_SOURCE=200809L', language : 'c')
 inc = include_directories('include')
 
 # full version with build suffix (vMAJOR.MINOR.PATCH-BUILD)
-phosphor_version = '0.0.2-023'
+phosphor_version = '0.0.2-024'
 
 # ---- dependencies ---- #
 

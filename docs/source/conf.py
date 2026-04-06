@@ -7,7 +7,7 @@ author = "Simone Del Popolo"
 
 # Phosphor version -- keep in sync with phosphor_version in meson.build
 version = "0.0.2"
-release = "0.0.2-023"
+release = "0.0.2-024"
 
 # -- General configuration ---------------------------------------------------
 
