@@ -2,7 +2,7 @@
    :title: phosphor project summary
    :tags: #neonsignal, #phosphor
    :status: active
-   :updated: 2026-03-30
+   :updated: 2026-04-04
 
 .. index::
    single: project summary
@@ -326,6 +326,62 @@ dashboard library [COMPLETED]
 - vendored ncurses via ``subprojects/ncurses.wrap`` (fallback when system
   ncurses unavailable)
 
+SoC audit -- cJSON consolidation [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- vendored cJSON v1.7.18 (MIT) via ``subprojects/cjson.wrap``
+- ``include/phosphor/json.h`` + ``src/core/json.c``: ``ph_json_*`` wrapper
+  API (parse, parse_file, get_object, add_object, add_string, print, destroy)
+- ACME module migrated from hand-rolled ``strstr`` JSON to ``ph_json_*`` API
+- old ``src/certs/acme_json.h`` and ``acme_json.c`` removed
+- zero ``.h`` files remain in ``src/`` directories
+- see ``soc-audit-json-consolidation.[COMPLETED].rst``
+
+dashboard TUI features [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+extensive dashboard enhancements split across granular ``db_*.c`` files
+(15 source files total in ``src/dashboard/``):
+
+- **cursor navigation**: arrow keys activate a visible cursor line with
+  reverse-video highlighting (``CP_CURSOR_LINE``). ``cursor = -1`` means
+  auto-follow; ``cursor >= 0`` is a ring buffer index. ``PgUp``/``PgDn``/
+  ``Home``/``End`` for fast movement
+- **vim-style visual select** (``v``): anchor + cursor define contiguous
+  range, highlighted in blue (``CP_SELECTED_LINE``). arrows extend selection
+  in select mode. ``Esc`` cancels
+- **JSON export** (``V``): exports selection to
+  ``phosphor.<panel>.json`` with daily-indexed structure (``DDMMYYYY`` key,
+  numbered line keys). read-modify-write with cJSON, ANSI stripped
+- **viewport freeze**: when scrolled, new pipe output increments scroll offset
+  instead of shifting the view. stable reading while output continues
+- **:save <path>**: saves focused panel ring buffer to
+  ``DD.MM.YYYY.<panel>.<path>.json`` with incremental numbered slots
+  (``"0"``, ``"1"``, ...). clears panel after each save. read-modify-write
+- **:saveall**: saves all panels to ``DD.MM.YYYY.all.json`` with panel-keyed
+  sub-objects per save slot. clears all panels after save
+- **fuzzy log finder** (``g``): popup overlay scanning cwd for ``.json``
+  files. fuzzy scoring with consecutive/boundary bonuses. file picker phase
+  lists files; Enter opens selected file in JSON viewer. implemented in
+  ``db_fuzzy.c``
+- **JSON viewer popup**: full-screen tree browser with fold/unfold. all data
+  starts folded. ``db_json_node_t`` flat array from cJSON pre-order traversal.
+  syntax highlighting (keys cyan, strings green, numbers yellow, bools magenta).
+  ``z``/Enter toggle fold, ``l``/``h`` open/close, ``j``/``k`` navigate.
+  Esc returns to fuzzy, ``q`` closes everything. implemented in
+  ``db_json_fold.c``
+- **inline JSON fold** (``z``): parses JSON from cursor line in panel,
+  pretty-prints with cJSON, renders syntax-highlighted fold inline
+- **popup system**: 6 popup types (help, about, commands, phosphor-help,
+  fuzzy finder, JSON viewer). all rendered as overlay windows, recreated
+  each frame for resize handling
+- **search** (``/``): plain-text pattern search with ``strstr`` highlighting.
+  ``n``/``N`` jump between matches
+- **command mode** (``:``): vi-style command line for start/stop/clear/save/
+  saveall
+- **start/stop buttons**: ``Ctrl-S``/``Ctrl-T`` with ``tcsetattr`` XON/XOFF
+  override
+
 terminal features library [COMPLETED]
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -409,21 +465,18 @@ each). certs and doctor enable debug level but emit zero debug messages.
 
 see ``verbose-flag-implementation.[DRAFT ○].rst``
 
-SoC audit -- header placement and JSON library consolidation [DRAFT ○]
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SoC audit -- header placement and JSON library consolidation [COMPLETED]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-fix structural inconsistencies accumulated during rapid feature development.
-``src/certs/acme_json.h`` is the only internal header in ``src/`` -- breaks
-the convention that all public/shared headers live in ``include/phosphor/``.
-the hand-rolled JSON extraction (``strstr`` + manual quote scanning) has no
-escape handling, no Unicode support, and silent failure on malformed input.
+vendored cJSON v1.7.18, created ``ph_json_*`` wrapper API, migrated ACME
+module, removed hand-rolled JSON. zero internal headers remain in ``src/``.
 
-- task 1: vendor cJSON (MIT, ~2 KLOC, single .c/.h pair)
-- task 2: create ``ph_json_*`` API in ``include/phosphor/json.h``
-- task 3: migrate ACME module (4 files) to new API
-- task 4: remove ``acme_json.h``/``acme_json.c``, update tests
+- task 1: vendor cJSON (MIT, ~2 KLOC) [DONE]
+- task 2: create ``ph_json_*`` API in ``include/phosphor/json.h`` [DONE]
+- task 3: migrate ACME module (4 files) to new API [DONE]
+- task 4: remove ``acme_json.h``/``acme_json.c`` [DONE]
 
-see ``soc-audit-json-consolidation.[DRAFT ○].rst``
+see ``soc-audit-json-consolidation.[COMPLETED ✓].rst``
 
 
 key technical decisions
@@ -458,7 +511,7 @@ plans:
    ├── testing-infrastructure-ceedling.[COMPLETED ✓].rst
    ├── code-coverage-infrastructure.[COMPLETED ✓].rst
    ├── glow-command-embedded-template.[COMPLETED ✓].rst
-   ├── soc-audit-json-consolidation.[DRAFT ○].rst
+   ├── soc-audit-json-consolidation.[COMPLETED ✓].rst
    ├── phase-0/
    │   ├── index.[COMPLETED ✓].rst
    │   ├── task-1-script-inventory.[COMPLETED ✓].rst
