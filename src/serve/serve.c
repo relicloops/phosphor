@@ -134,6 +134,20 @@ static char **build_ns_argv(const ph_serve_ns_config_t *ns) {
     if (ns->grafts_dir)
         ph_argv_pushf(&ab, "--grafts-dir=%s", ns->grafts_dir);
 
+    /* logging flags */
+    if (ns->enable_debug)
+        ph_argv_push(&ab, "--enable-debug");
+    if (ns->enable_log)
+        ph_argv_push(&ab, "--enable-log");
+    if (ns->enable_log_color)
+        ph_argv_push(&ab, "--enable-log-color");
+    if (ns->enable_file_log)
+        ph_argv_push(&ab, "--enable-file-log");
+    if (ns->log_directory)
+        ph_argv_pushf(&ab, "--log-directory=%s", ns->log_directory);
+    if (ns->disable_proxies_check)
+        ph_argv_push(&ab, "--disable-proxies-check");
+
     return ph_argv_finalize(&ab);
 }
 

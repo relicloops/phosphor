@@ -240,6 +240,22 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         cfg.ns.grafts_dir = f ? f : (ms ? ms->ns_grafts_dir : NULL);
     }
 
+    /* neonsignal logging flags -- tier 1 (flag) > tier 2 (manifest) */
+    cfg.ns.enable_debug = ph_args_has_flag(args, "enable-debug")
+                        || (ms && ms->ns_enable_debug);
+    cfg.ns.enable_log = ph_args_has_flag(args, "enable-log")
+                      || (ms && ms->ns_enable_log);
+    cfg.ns.enable_log_color = ph_args_has_flag(args, "enable-log-color")
+                            || (ms && ms->ns_enable_log_color);
+    cfg.ns.enable_file_log = ph_args_has_flag(args, "enable-file-log")
+                           || (ms && ms->ns_enable_file_log);
+    {
+        const char *f = ph_args_get_flag(args, "log-directory");
+        cfg.ns.log_directory = f ? f : (ms ? ms->ns_log_directory : NULL);
+    }
+    cfg.ns.disable_proxies_check = ph_args_has_flag(args, "disable-proxies-check")
+                                 || (ms && ms->ns_disable_proxies_check);
+
     /* watch config -- tier 1 (flag) > tier 2 (manifest [serve]) */
     cfg.ns.watch = watch_flag || (ms && ms->ns_watch);
     cfg.ns.watch_cmd = watch_cmd_flag ? watch_cmd_flag
@@ -395,7 +411,7 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         /* build dashboard config from session */
         ph_dashboard_config_t dcfg;
         memset(&dcfg, 0, sizeof(dcfg));
-        dcfg.status_text = cfg.ns.host ? cfg.ns.host : "phosphor serve";
+        dcfg.status_text = NULL;  /* symbol rendered directly by status bar */
 
         /* info box lines */
         int ii = 0;
@@ -440,6 +456,11 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         dcfg.panels[pi].stdout_fd = ph_serve_ns_stdout_fd(session);
         dcfg.panels[pi].stderr_fd = ph_serve_ns_stderr_fd(session);
         dcfg.panels[pi].pid = ph_serve_ns_pid(session);
+        dcfg.panels[pi].tab_count = 2;
+        dcfg.panels[pi].tabs[0].name = "live-stream";
+        dcfg.panels[pi].tabs[0].source_stream = 0; /* stdout */
+        dcfg.panels[pi].tabs[1].name = "debug-stream";
+        dcfg.panels[pi].tabs[1].source_stream = 1; /* stderr */
         pi++;
 
         if (!cfg.skip_redirect) {
@@ -461,6 +482,10 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         }
 
         dcfg.panel_count = pi;
+
+        /* pass spawn config so the dashboard can start/stop */
+        dcfg.serve_cfg = &cfg;
+        dcfg.session_ptr = &session;
 
         ph_dashboard_t *db = NULL;
         if (ph_dashboard_create(&dcfg, &db) == PH_OK) {

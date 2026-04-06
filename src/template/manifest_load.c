@@ -367,6 +367,19 @@ static ph_result_t parse_serve_config(toml_table_t *root,
         toml_value_t pt = toml_table_int(ns, "port");
         if (pt.ok) out->ns_port = (int)pt.u.i;
 
+        /* logging flags */
+        toml_value_t ed = toml_table_bool(ns, "enable_debug");
+        out->ns_enable_debug = ed.ok && ed.u.b;
+        toml_value_t el = toml_table_bool(ns, "enable_log");
+        out->ns_enable_log = el.ok && el.u.b;
+        toml_value_t ec = toml_table_bool(ns, "enable_log_color");
+        out->ns_enable_log_color = ec.ok && ec.u.b;
+        toml_value_t ef = toml_table_bool(ns, "enable_file_log");
+        out->ns_enable_file_log = ef.ok && ef.u.b;
+        out->ns_log_directory = toml_get_string(ns, "log_directory");
+        toml_value_t dp = toml_table_bool(ns, "disable_proxies_check");
+        out->ns_disable_proxies_check = dp.ok && dp.u.b;
+
         toml_value_t wt = toml_table_bool(ns, "watch");
         out->ns_watch = wt.ok && wt.u.b;
         out->ns_watch_cmd = toml_get_string(ns, "watch_cmd");

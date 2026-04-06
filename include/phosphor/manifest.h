@@ -163,6 +163,13 @@ typedef struct {
     char *ns_upload_dir;
     char *ns_augments_dir;
     char *ns_grafts_dir;
+    /* neonsignal logging flags */
+    bool  ns_enable_debug;
+    bool  ns_enable_log;
+    bool  ns_enable_log_color;
+    bool  ns_enable_file_log;
+    char *ns_log_directory;
+    bool  ns_disable_proxies_check;
     bool  ns_watch;           /* start file watcher alongside server */
     char *ns_watch_cmd;       /* shell command; NULL = default */
 

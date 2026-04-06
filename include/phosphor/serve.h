@@ -20,6 +20,13 @@ typedef struct {
     const char *upload_dir;     /* NULL = omit */
     const char *augments_dir;   /* NULL = omit */
     const char *grafts_dir;     /* NULL = omit */
+    /* logging flags (passed through to neonsignal) */
+    bool        enable_debug;          /* --enable-debug */
+    bool        enable_log;            /* --enable-log */
+    bool        enable_log_color;      /* --enable-log-color */
+    bool        enable_file_log;       /* --enable-file-log */
+    const char *log_directory;         /* --log-directory=PATH; NULL = omit */
+    bool        disable_proxies_check; /* --disable-proxies-check */
     bool        watch;          /* start file watcher process */
     const char *watch_cmd;      /* shell command; NULL = default */
     const char *deploy_dir;     /* deploy public_dir for watcher; NULL = omit */
