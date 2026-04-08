@@ -294,7 +294,9 @@ phosphor_deps += cjson_dep
 
 # ncurses: serve dashboard TUI
 if get_option('dashboard')
-  ncurses_dep = dependency('ncurses', required : false)
+  ncurses_dep = dependency('ncurses',
+                            fallback : ['ncurses', 'ncurses_dep'],
+                            required : false)
   if not ncurses_dep.found()
     ncurses_dep = cc.find_library('ncurses', required : false)
   endif
