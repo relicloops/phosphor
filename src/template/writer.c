@@ -634,6 +634,22 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                 }
                 stats->files_copied++;
             } else {
+                /* audit fix (2026-04-08T17-06-51Z, finding 4): execute-time
+                 * containment re-check mirroring chmod/remove. A symlink
+                 * swapped into the staging tree between plan build and
+                 * execute can redirect this single-file write outside the
+                 * destination tree, because ph_fs_write_file / open() with
+                 * O_CREAT follow symlinks. ph_path_is_under canonicalizes
+                 * both sides so a swapped symlink is caught. */
+                if (plan->dest_dir &&
+                    !ph_path_is_under(op->to_abs, plan->dest_dir)) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                            "copy op %zu: target escapes dest_dir: %s",
+                            i, op->to_abs);
+                    goto cleanup_err;
+                }
+
                 /* ensure parent dir */
                 char *dir = ph_path_dirname(op->to_abs);
                 if (dir) { ph_fs_mkdir_p(dir, 0755); ph_free(dir); }
@@ -711,6 +727,20 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                     goto cleanup_err;
                 }
             } else {
+                /* audit fix (2026-04-08T17-06-51Z, finding 4): execute-time
+                 * containment re-check mirroring chmod/remove. A symlink
+                 * swapped in between plan build and execute can redirect
+                 * this single-file render outside the destination tree.
+                 * See the matching block in the copy branch above. */
+                if (plan->dest_dir &&
+                    !ph_path_is_under(op->to_abs, plan->dest_dir)) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                            "render op %zu: target escapes dest_dir: %s",
+                            i, op->to_abs);
+                    goto cleanup_err;
+                }
+
                 /* ensure parent dir */
                 char *dir = ph_path_dirname(op->to_abs);
                 if (dir) { ph_fs_mkdir_p(dir, 0755); ph_free(dir); }
