@@ -262,6 +262,10 @@ int ph_cmd_doctor(const ph_cli_config_t *config,
     if (verbose)
         ph_log_set_level(PH_LOG_DEBUG);
 
+    /* reserved flags -- warn and ignore, matching build --normalize-eol style */
+    if (ph_args_has_flag(args, "toml"))
+        ph_log_warn("doctor: --toml is reserved for future use; ignored");
+
     /* resolve project root */
     char *project_root_abs = NULL;
 
@@ -309,11 +313,13 @@ int ph_cmd_doctor(const ph_cli_config_t *config,
     /* 1. manifest */
     warnings += check_manifest(project_root_abs);
 
-    /* 2. tools */
+    /* 2. tools -- audit fix: accumulate every tool check so the summary
+     * actually reflects missing required tools instead of printing
+     * "all checks passed" when only openssl was present. */
     warnings += check_tool("openssl");
-    check_tool("esbuild");
-    check_tool("neonsignal");
-    check_tool("neonsignal_redirect");
+    warnings += check_tool("esbuild");
+    warnings += check_tool("neonsignal");
+    warnings += check_tool("neonsignal_redirect");
 
     /* 3. node deps */
     warnings += check_node(project_root_abs);

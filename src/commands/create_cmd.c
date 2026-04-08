@@ -118,6 +118,18 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
   if (verbose)
     ph_log_set_level(PH_LOG_DEBUG);
 
+  /* reserved flags -- warn and ignore, matching build --normalize-eol style */
+  if (ph_args_has_flag(args, "toml"))
+    ph_log_warn("create: --toml is reserved for future use; ignored");
+  if (ph_args_has_flag(args, "allow-hooks"))
+    ph_log_warn("create: --allow-hooks is reserved for future use; ignored");
+  if (ph_args_has_flag(args, "yes"))
+    ph_log_warn("create: --yes is reserved for future use; ignored");
+  if (ph_args_has_flag(args, "normalize-eol"))
+    ph_log_warn("create: --normalize-eol is reserved for future use; ignored");
+  if (ph_args_has_flag(args, "allow-hidden"))
+    ph_log_warn("create: --allow-hidden is reserved for future use; ignored");
+
   if (!name_val) {
     ph_log_error("--name is required");
     return PH_ERR_USAGE;
@@ -166,8 +178,7 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
     if (clone_dir)
       memcpy(clone_dir, template_abs, clen + 1);
 #else
-    ph_log_error("remote git templates require libgit2 support; "
-                 "recompile with: meson setup build -Dlibgit2=true");
+    ph_log_error("remote git templates are not available in this build");
     return PH_ERR_USAGE;
 #endif /* PHOSPHOR_HAS_LIBGIT2 */
   } else if (ph_archive_detect(tmpl_val) != PH_ARCHIVE_NONE) {
@@ -213,8 +224,7 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
     if (extract_dir)
       memcpy(extract_dir, template_abs, elen + 1);
 #else
-    ph_log_error("archive templates require libarchive support; "
-                 "recompile with: meson setup build -Dlibarchive=true");
+    ph_log_error("archive templates are not available in this build");
     return PH_ERR_USAGE;
 #endif /* PHOSPHOR_HAS_LIBARCHIVE */
   } else {
@@ -481,7 +491,7 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
   /* step 9: staging -> execute -> commit */
   ph_staging_t staging;
   memset(&staging, 0, sizeof(staging));
-  if (ph_staging_create(dest_dir, &staging, &err) != PH_OK) {
+  if (ph_staging_create(dest_dir, force, &staging, &err) != PH_OK) {
     ph_log_error("staging: %s", err ? err->message : "unknown");
     exit_code = err ? (int)err->category : PH_ERR_FS;
     ph_error_destroy(err);

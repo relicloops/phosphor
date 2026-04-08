@@ -293,7 +293,7 @@ int ph_cmd_glow(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
   /* step 9: staging -> execute -> commit */
   ph_staging_t staging;
   memset(&staging, 0, sizeof(staging));
-  if (ph_staging_create(dest_dir, &staging, &err) != PH_OK) {
+  if (ph_staging_create(dest_dir, force, &staging, &err) != PH_OK) {
     ph_log_error("staging: %s", err ? err->message : "unknown");
     exit_code = err ? (int)err->category : PH_ERR_FS;
     ph_error_destroy(err);

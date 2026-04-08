@@ -110,15 +110,62 @@ int ph_cmd_rm(const ph_cli_config_t *config,
         return PH_ERR_INTERNAL;
     }
 
-    /* verify target stays within project root */
-    size_t root_len = strlen(project_root_abs);
-    if (strncmp(target_abs, project_root_abs, root_len) != 0 ||
-        (target_abs[root_len] != '/' && target_abs[root_len] != '\0')) {
+    /* audit fix: canonical containment check. The previous textual-prefix
+     * guard could be defeated by a symlinked intermediate directory inside
+     * the project that points outside the tree: the joined string still
+     * begins with project_root_abs but ph_fs_rmtree() would follow the
+     * symlink target. Resolve both sides with realpath(3) via
+     * ph_path_resolve() and then assert containment with ph_path_is_under().
+     *
+     * Two-step resolution: the target itself may not exist yet (the textual
+     * checks above don't care), so we canonicalize the parent of target_abs
+     * which must exist because specific_val was joined under
+     * project_root_abs. For an existing target, ph_path_resolve works
+     * directly. */
+    char *canonical_root = ph_path_resolve(project_root_abs);
+    if (!canonical_root) {
+        ph_log_error("rm: cannot canonicalize project root: %s",
+                     project_root_abs);
+        ph_free(target_abs);
+        ph_free(project_root_abs);
+        return PH_ERR_INTERNAL;
+    }
+
+    char *canonical_target = ph_path_resolve(target_abs);
+    if (!canonical_target) {
+        /* target may not exist yet; resolve parent and rejoin basename */
+        char *parent = ph_path_dirname(target_abs);
+        const char *slash = strrchr(target_abs, '/');
+        const char *base = slash ? slash + 1 : target_abs;
+        if (parent) {
+            char *canonical_parent = ph_path_resolve(parent);
+            if (canonical_parent) {
+                canonical_target = ph_path_join(canonical_parent, base);
+                ph_free(canonical_parent);
+            }
+            ph_free(parent);
+        }
+    }
+
+    if (!canonical_target) {
+        ph_log_error("rm: cannot canonicalize target: %s", target_abs);
+        ph_free(canonical_root);
+        ph_free(target_abs);
+        ph_free(project_root_abs);
+        return PH_ERR_INTERNAL;
+    }
+
+    if (!ph_path_is_under(canonical_target, canonical_root)) {
         ph_log_error("rm: target escapes project root: %s", target_abs);
+        ph_free(canonical_target);
+        ph_free(canonical_root);
         ph_free(target_abs);
         ph_free(project_root_abs);
         return PH_ERR_VALIDATE;
     }
+
+    ph_free(canonical_target);
+    ph_free(canonical_root);
 
     /* step 6: check existence */
     ph_fs_stat_t st;
