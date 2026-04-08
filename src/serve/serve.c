@@ -15,8 +15,12 @@
 
 /* ---- session ---- */
 
-/* default watch command for cathode/phosphor projects */
-#define PH_DEFAULT_WATCH_CMD "node scripts/_default/build.mjs --watch"
+/* default watch command for cathode/phosphor projects.
+ * argv form so we can spawn it without sh -c, which keeps deploy_dir from
+ * being interpreted as shell text when it contains spaces or metacharacters. */
+static const char *const PH_DEFAULT_WATCH_ARGV[] = {
+    "node", "scripts/_default/build.mjs", "--watch", NULL
+};
 
 struct ph_serve_session {
     pid_t ns_pid;
@@ -60,20 +64,35 @@ static bool find_in_path(const char *name) {
     return false;
 }
 
+/*
+ * audit fix (2026-04-08T11-07-17Z): return true if `s` is a bare
+ * binary name (non-empty, no slash). Bare names must resolve via
+ * PATH rather than the filesystem -- previously any non-NULL
+ * bin_path fell through to access(), which only looked in the
+ * current working directory and broke --neonsignal-bin=neonsignal
+ * and manifest values like `bin = "neonsignal"`.
+ */
+static bool is_bare_name(const char *s) {
+    return s && *s && strchr(s, '/') == NULL;
+}
+
 ph_result_t ph_serve_check_binaries(const ph_serve_config_t *cfg,
                                      ph_error_t **err) {
     if (!cfg) return PH_ERR;
 
-    /* check neonsignal */
-    if (cfg->ns.bin_path) {
-        if (access(cfg->ns.bin_path, X_OK) != 0) {
+    /* check neonsignal: bare names route through PATH, anything
+     * with a slash (absolute or relative) is a filesystem path. */
+    const char *ns_bin = cfg->ns.bin_path;
+    if (ns_bin && !is_bare_name(ns_bin)) {
+        if (access(ns_bin, X_OK) != 0) {
             if (err)
                 *err = ph_error_createf(PH_ERR_CONFIG, 0,
-                    "neonsignal not found at '%s'", cfg->ns.bin_path);
+                    "neonsignal not found at '%s'", ns_bin);
             return PH_ERR;
         }
     } else {
-        if (!find_in_path("neonsignal")) {
+        const char *name = ns_bin ? ns_bin : "neonsignal";
+        if (!find_in_path(name)) {
             if (err)
                 *err = ph_error_createf(PH_ERR_CONFIG, 0,
                     "neonsignal not found in PATH; "
@@ -84,16 +103,18 @@ ph_result_t ph_serve_check_binaries(const ph_serve_config_t *cfg,
 
     /* check redirect */
     if (!cfg->skip_redirect) {
-        if (cfg->redir.bin_path) {
-            if (access(cfg->redir.bin_path, X_OK) != 0) {
+        const char *redir_bin = cfg->redir.bin_path;
+        if (redir_bin && !is_bare_name(redir_bin)) {
+            if (access(redir_bin, X_OK) != 0) {
                 if (err)
                     *err = ph_error_createf(PH_ERR_CONFIG, 0,
                         "neonsignal_redirect not found at '%s'",
-                        cfg->redir.bin_path);
+                        redir_bin);
                 return PH_ERR;
             }
         } else {
-            if (!find_in_path("neonsignal_redirect")) {
+            const char *name = redir_bin ? redir_bin : "neonsignal_redirect";
+            if (!find_in_path(name)) {
                 if (err)
                     *err = ph_error_createf(PH_ERR_CONFIG, 0,
                         "neonsignal_redirect not found in PATH; "
@@ -360,20 +381,8 @@ ph_result_t ph_serve_start(const ph_serve_config_t *cfg,
 
     /* spawn file watcher */
     if (cfg->ns.watch) {
-        const char *base_cmd = cfg->ns.watch_cmd ? cfg->ns.watch_cmd
-                                                  : PH_DEFAULT_WATCH_CMD;
-
-        /* for default watch cmd, append --deploy if deploy_dir is known */
-        char cmd_buf[2048];
-        const char *cmd = base_cmd;
-        if (!cfg->ns.watch_cmd && cfg->ns.deploy_dir) {
-            snprintf(cmd_buf, sizeof(cmd_buf), "%s --deploy %s",
-                     PH_DEFAULT_WATCH_CMD, cfg->ns.deploy_dir);
-            cmd = cmd_buf;
-        }
-
         ph_argv_builder_t wb;
-        if (ph_argv_init(&wb, 4) != PH_OK) {
+        if (ph_argv_init(&wb, 8) != PH_OK) {
             ph_serve_stop(s);
             ph_free(s);
             if (err)
@@ -381,9 +390,26 @@ ph_result_t ph_serve_start(const ph_serve_config_t *cfg,
                     "serve: failed to build watch argv");
             return PH_ERR;
         }
-        ph_argv_push(&wb, "sh");
-        ph_argv_push(&wb, "-c");
-        ph_argv_push(&wb, cmd);
+
+        /* audit fix: build the default watcher as explicit argv. previously
+         * we snprintf'd "<cmd> --deploy <deploy_dir>" into a buffer and ran
+         * it via sh -c, which interpreted any spaces/metacharacters in
+         * deploy_dir (a manifest-controlled value) as shell text. argv keeps
+         * deploy_dir verbatim for the child. user-supplied watch_cmd still
+         * goes through sh -c because it is opt-in shell input. */
+        if (cfg->ns.watch_cmd) {
+            ph_argv_push(&wb, "sh");
+            ph_argv_push(&wb, "-c");
+            ph_argv_push(&wb, cfg->ns.watch_cmd);
+        } else {
+            for (size_t i = 0; PH_DEFAULT_WATCH_ARGV[i]; i++)
+                ph_argv_push(&wb, PH_DEFAULT_WATCH_ARGV[i]);
+            if (cfg->ns.deploy_dir) {
+                ph_argv_push(&wb, "--deploy");
+                ph_argv_push(&wb, cfg->ns.deploy_dir);
+            }
+        }
+
         char **watch_argv = ph_argv_finalize(&wb);
         if (!watch_argv) {
             ph_serve_stop(s);
@@ -411,8 +437,7 @@ ph_result_t ph_serve_start(const ph_serve_config_t *cfg,
             return PH_ERR;
         }
         s->child_count++;
-        ph_log_info("serve: watch started (pid %d): %s",
-                     (int)s->watch_pid, cmd);
+        ph_log_info("serve: watch started (pid %d)", (int)s->watch_pid);
     }
 
     /* install signal handlers for clean forwarding */
@@ -457,21 +482,40 @@ int ph_serve_wait(ph_serve_session_t *session) {
             code = 128 + WTERMSIG(status);
         }
 
+        /* audit fix: if an "authoritative" child (neonsignal, or the
+         * redirect when it is enabled) exits, tear down the rest of the
+         * stack instead of waiting on survivors. previously the loop just
+         * decremented `remaining`, leaving the watcher / redirect running
+         * after neonsignal died and making `phosphor serve` look hung. */
+        bool authoritative_exit = false;
+
         if (pid == session->ns_pid) {
             ph_log_info("serve: neonsignal exited (code %d)", code);
             session->ns_pid = 0;
             remaining--;
+            authoritative_exit = true;
         } else if (pid == session->redir_pid) {
             ph_log_info("serve: neonsignal_redirect exited (code %d)", code);
             session->redir_pid = 0;
             remaining--;
+            authoritative_exit = true;
         } else if (pid == session->watch_pid) {
             ph_log_info("serve: watch exited (code %d)", code);
             session->watch_pid = 0;
             remaining--;
+            /* the watcher is a helper -- its exit alone does not collapse
+             * the stack. fall through without setting authoritative_exit. */
         }
 
         if (code > worst_exit) worst_exit = code;
+
+        if (authoritative_exit && remaining > 0) {
+            ph_serve_stop(session);
+            /* ph_serve_stop reaped what it killed and zeroed the pids. drain
+             * any pre-existing zombies that might still be queued, then exit
+             * the loop. */
+            remaining = 0;
+        }
     }
 
     return worst_exit;
