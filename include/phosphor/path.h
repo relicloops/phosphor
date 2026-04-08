@@ -2,6 +2,7 @@
 #define PHOSPHOR_PATH_H
 
 #include "phosphor/types.h"
+#include "phosphor/error.h"
 
 /*
  * path normalization and safety utilities.
@@ -35,6 +36,30 @@ bool ph_path_is_absolute(const char *path);
  * returns heap-allocated result or NULL on error.
  */
 char *ph_path_join(const char *base, const char *rel);
+
+/*
+ * ph_path_resolve -- canonicalize a path via realpath(3).
+ * fully resolves "..", ".", and symlinks. for nonexistent tails,
+ * resolves the longest existing prefix and appends the remainder
+ * (rejecting traversal in the remainder).
+ * returns heap-allocated absolute path, or NULL on error.
+ */
+char *ph_path_resolve(const char *path);
+
+/*
+ * ph_path_is_under -- returns true if 'child' is contained within 'root'
+ * after full canonicalization of both paths.
+ * returns false if either path cannot be resolved.
+ */
+bool ph_path_is_under(const char *child, const char *root);
+
+/*
+ * ph_path_safe_join -- like ph_path_join but rejects absolute 'rel'
+ * and rejects ".." traversal in 'rel'.
+ * on violation: returns NULL and sets *err (if err != NULL).
+ */
+char *ph_path_safe_join(const char *base, const char *rel,
+                        ph_error_t **err);
 
 /*
  * ph_path_dirname -- return directory portion of path.

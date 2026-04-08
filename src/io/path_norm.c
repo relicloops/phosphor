@@ -1,6 +1,8 @@
 #include "phosphor/path.h"
 #include "phosphor/alloc.h"
+#include "phosphor/error.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 char *ph_path_normalize(const char *path) {
@@ -206,4 +208,159 @@ const char *ph_path_extension(const char *path) {
     if (!dot || dot == base) return NULL;
 
     return dot;
+}
+
+char *ph_path_resolve(const char *path) {
+    if (!path) return NULL;
+
+    /* first try realpath directly -- works for existing paths */
+    char *rp = realpath(path, NULL);
+    if (rp) {
+        size_t len = strlen(rp);
+        char *out = ph_alloc(len + 1);
+        if (!out) {
+            free(rp);
+            return NULL;
+        }
+        memcpy(out, rp, len + 1);
+        free(rp);
+        return out;
+    }
+
+    /*
+     * fallback: walk back through parent directories until realpath()
+     * succeeds, then append the remaining tail. reject if the tail
+     * contains ".." traversal.
+     */
+    size_t plen = strlen(path);
+    char *work = ph_alloc(plen + 1);
+    if (!work) return NULL;
+    memcpy(work, path, plen + 1);
+
+    /* find longest existing prefix */
+    char *tail = NULL;
+    for (;;) {
+        char *slash = strrchr(work, '/');
+        if (!slash) {
+            /* no more separators -- resolve "." and use all as tail */
+            ph_free(work);
+            char *cwd_rp = realpath(".", NULL);
+            if (!cwd_rp) return NULL;
+            if (ph_path_has_traversal(path)) {
+                free(cwd_rp);
+                return NULL;
+            }
+            size_t cwd_len = strlen(cwd_rp);
+            size_t total = cwd_len + 1 + plen + 1;
+            char *out = ph_alloc(total);
+            if (!out) { free(cwd_rp); return NULL; }
+            memcpy(out, cwd_rp, cwd_len);
+            out[cwd_len] = '/';
+            memcpy(out + cwd_len + 1, path, plen + 1);
+            free(cwd_rp);
+            return out;
+        }
+
+        if (tail) {
+            /* shift existing tail to make room for new prefix piece */
+            size_t tail_len = strlen(tail);
+            size_t piece_len = strlen(slash + 1);
+            char *new_tail = ph_alloc(piece_len + 1 + tail_len + 1);
+            if (!new_tail) { ph_free(work); return NULL; }
+            memcpy(new_tail, slash + 1, piece_len);
+            new_tail[piece_len] = '/';
+            memcpy(new_tail + piece_len + 1, tail, tail_len + 1);
+            ph_free(tail);
+            tail = new_tail;
+        } else {
+            size_t piece_len = strlen(slash + 1);
+            tail = ph_alloc(piece_len + 1);
+            if (!tail) { ph_free(work); return NULL; }
+            memcpy(tail, slash + 1, piece_len + 1);
+        }
+
+        *slash = '\0';
+
+        /* empty means we hit root "/" */
+        const char *try_path = (work[0] == '\0') ? "/" : work;
+        char *rp2 = realpath(try_path, NULL);
+        if (rp2) {
+            ph_free(work);
+            if (ph_path_has_traversal(tail)) {
+                free(rp2);
+                ph_free(tail);
+                return NULL;
+            }
+            size_t rp2_len = strlen(rp2);
+            size_t tail_len = strlen(tail);
+            size_t total = rp2_len + 1 + tail_len + 1;
+            char *out = ph_alloc(total);
+            if (!out) { free(rp2); ph_free(tail); return NULL; }
+            memcpy(out, rp2, rp2_len);
+            if (rp2_len == 1 && rp2[0] == '/') {
+                memcpy(out + 1, tail, tail_len + 1);
+            } else {
+                out[rp2_len] = '/';
+                memcpy(out + rp2_len + 1, tail, tail_len + 1);
+            }
+            free(rp2);
+            ph_free(tail);
+            return out;
+        }
+
+        if (work[0] == '\0') {
+            /* reached root and nothing resolved */
+            ph_free(work);
+            ph_free(tail);
+            return NULL;
+        }
+    }
+}
+
+bool ph_path_is_under(const char *child, const char *root) {
+    if (!child || !root) return false;
+
+    char *rchild = ph_path_resolve(child);
+    if (!rchild) return false;
+    char *rroot = ph_path_resolve(root);
+    if (!rroot) { ph_free(rchild); return false; }
+
+    size_t root_len = strlen(rroot);
+    bool under = false;
+    if (strncmp(rchild, rroot, root_len) == 0) {
+        char next = rchild[root_len];
+        /* either exact match, or root is "/" (root_len==1), or '/' follows */
+        if (next == '\0' || next == '/' ||
+            (root_len == 1 && rroot[0] == '/'))
+            under = true;
+    }
+
+    ph_free(rchild);
+    ph_free(rroot);
+    return under;
+}
+
+char *ph_path_safe_join(const char *base, const char *rel, ph_error_t **err) {
+    if (!base || !rel) {
+        if (err)
+            *err = ph_error_create(PH_ERR_INTERNAL, 0,
+                "ph_path_safe_join: NULL argument");
+        return NULL;
+    }
+
+    if (ph_path_is_absolute(rel)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                "absolute path not allowed: %s", rel);
+        return NULL;
+    }
+
+    if (ph_path_has_traversal(rel)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                "path traversal not allowed: %s", rel);
+        return NULL;
+    }
+
+    return ph_path_join(base, rel);
 }
