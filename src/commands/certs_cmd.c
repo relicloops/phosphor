@@ -80,8 +80,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
 #ifndef PHOSPHOR_HAS_LIBCURL
     (void)config; (void)project_root; (void)domain_filter;
     (void)action; (void)directory_url; (void)dry_run; (void)force;
-    ph_log_error("certs: Let's Encrypt requires phosphor built with "
-                 "-Dlibcurl=true");
+    ph_log_error("Let's Encrypt ACME is not available in this build");
     return PH_ERR_CONFIG;
 #else
     (void)force;
@@ -130,10 +129,34 @@ static int run_letsencrypt(const ph_certs_config_t *config,
             return PH_ERR_INTERNAL;
         }
 
+        /* audit fix (2026-04-08T11-07-17Z): build the effective SAN
+         * list once per iteration. Index 0 is always d->name, followed
+         * by unique entries from d->san. Passed to both
+         * ph_acme_order_create and ph_acme_finalize below; also used
+         * by dry-run logging so it mirrors the real pipeline. */
+        char **eff_sans = NULL;
+        size_t eff_count = 0;
+        {
+            ph_error_t *sanerr = NULL;
+            if (ph_cert_domain_effective_sans(d, &eff_sans, &eff_count,
+                                                &sanerr) != PH_OK) {
+                ph_log_error("certs: SAN build failed for %s: %s",
+                             d->name,
+                             sanerr ? sanerr->message : "unknown");
+                int rc = sanerr ? (int)sanerr->category : PH_ERR_INTERNAL;
+                ph_error_destroy(sanerr);
+                ph_free(domain_dir);
+                ph_free(default_key);
+                return rc;
+            }
+        }
+
         if (dry_run) {
             if (strcmp(action, "request") == 0) {
                 ph_log_info("dry-run: would request LE cert for %s", d->name);
-                ph_log_info("  SANs: %zu", d->san_count);
+                ph_log_info("  SANs: %zu", eff_count);
+                for (size_t s = 0; s < eff_count; s++)
+                    ph_log_info("    %s", eff_sans[s]);
                 ph_log_info("  email: %s", d->email);
                 ph_log_info("  webroot: %s", d->webroot);
                 ph_log_info("  output: %s", domain_dir);
@@ -159,6 +182,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
             } else if (strcmp(action, "verify") == 0) {
                 ph_log_info("dry-run: would verify LE cert for %s", d->name);
             }
+            ph_cert_domain_sans_free(eff_sans, eff_count);
             ph_free(domain_dir);
             processed++;
             continue;
@@ -173,6 +197,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                              err ? err->message : "unknown");
                 int rc = err ? (int)err->category : PH_ERR_PROCESS;
                 ph_error_destroy(err);
+                ph_cert_domain_sans_free(eff_sans, eff_count);
                 ph_free(domain_dir);
                 ph_free(default_key);
                 return rc;
@@ -186,6 +211,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                              err ? err->message : "unknown");
                 int rc = err ? (int)err->category : PH_ERR_PROCESS;
                 ph_error_destroy(err);
+                ph_cert_domain_sans_free(eff_sans, eff_count);
                 ph_free(domain_dir);
                 ph_free(default_key);
                 return rc;
@@ -213,6 +239,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
             char *new_order_url = ph_alloc(new_order_cap);
             if (!new_order_url) {
                 ph_free(account_url);
+                ph_cert_domain_sans_free(eff_sans, eff_count);
                 ph_free(domain_dir);
                 ph_free(default_key);
                 return PH_ERR_INTERNAL;
@@ -222,8 +249,8 @@ static int run_letsencrypt(const ph_certs_config_t *config,
 
             if (ph_acme_order_create(key_path, account_url, new_order_url,
                                       directory_url,
-                                      (const char *const *)d->san,
-                                      d->san_count,
+                                      (const char *const *)eff_sans,
+                                      eff_count,
                                       &order_url, &finalize_url,
                                       &auth_urls, &auth_count,
                                       &err) != PH_OK) {
@@ -233,6 +260,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 int rc = err ? (int)err->category : PH_ERR_PROCESS;
                 ph_error_destroy(err);
                 ph_free(account_url);
+                ph_cert_domain_sans_free(eff_sans, eff_count);
                 ph_free(domain_dir);
                 ph_free(default_key);
                 return rc;
@@ -248,6 +276,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_free(order_url);
                     ph_free(finalize_url);
                     ph_free(account_url);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
                     ph_free(domain_dir);
                     ph_free(default_key);
                     return PH_ERR_SIGNAL;
@@ -267,6 +296,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_free(order_url);
                     ph_free(finalize_url);
                     ph_free(account_url);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
                     ph_free(domain_dir);
                     ph_free(default_key);
                     return rc;
@@ -283,8 +313,8 @@ static int run_letsencrypt(const ph_certs_config_t *config,
 
                 if (ph_acme_finalize(key_path, account_url, finalize_url,
                                       order_url, directory_url,
-                                      (const char *const *)d->san,
-                                      d->san_count,
+                                      (const char *const *)eff_sans,
+                                      eff_count,
                                       privkey_path, cert_path,
                                       &err) != PH_OK) {
                     ph_log_error("certs: ACME finalize failed: %s",
@@ -299,6 +329,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_free(order_url);
                     ph_free(finalize_url);
                     ph_free(account_url);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
                     ph_free(domain_dir);
                     ph_free(default_key);
                     return rc;
@@ -323,6 +354,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_log_error("certs: no certificate found at %s",
                                  cert_path);
                     ph_free(cert_path);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
                     ph_free(domain_dir);
                     ph_free(default_key);
                     return PH_ERR_FS;
@@ -332,6 +364,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 ph_argv_builder_t vb;
                 if (ph_argv_init(&vb, 8) != PH_OK) {
                     ph_free(cert_path);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
                     ph_free(domain_dir);
                     ph_free(default_key);
                     return PH_ERR_INTERNAL;
@@ -347,6 +380,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
 
                 if (!vargv) {
                     ph_free(cert_path);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
                     ph_free(domain_dir);
                     ph_free(default_key);
                     return PH_ERR_INTERNAL;
@@ -363,6 +397,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_log_error("certs: openssl x509 failed for %s",
                                  d->name);
                     ph_free(cert_path);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
                     ph_free(domain_dir);
                     ph_free(default_key);
                     return PH_ERR_PROCESS;
@@ -381,11 +416,13 @@ static int run_letsencrypt(const ph_certs_config_t *config,
         } else {
             ph_log_error("certs: unknown action '%s' "
                          "(expected: request, renew, verify)", action);
+            ph_cert_domain_sans_free(eff_sans, eff_count);
             ph_free(domain_dir);
             ph_free(default_key);
             return PH_ERR_USAGE;
         }
 
+        ph_cert_domain_sans_free(eff_sans, eff_count);
         ph_free(domain_dir);
         processed++;
     }
@@ -483,12 +520,45 @@ int ph_cmd_certs(const ph_cli_config_t *config,
     int exit_code = 0;
 
     if (f_generate) {
-        /* CA + all local + all LE */
-        exit_code = run_local(&certs_cfg, project_root, false, NULL,
-                              f_dry_run, f_force);
-        if (exit_code == 0 && !ph_signal_interrupted()) {
-            exit_code = run_letsencrypt(&certs_cfg, project_root, NULL,
-                                         "request", directory_url,
+        /* audit fix (2026-04-08T11-07-17Z): honor --domain in the
+         * --generate dispatch. Without this, every manifest entry
+         * was processed regardless of the filter, which risked
+         * bulk LE rate-limit hits and silently overwrote local
+         * leaf certs the user did not target. Pre-resolve the
+         * target domain's mode so we skip the non-matching
+         * pipeline; otherwise run_local's own "no local domain
+         * matching" error would trip when the filter targets an
+         * LE-only entry (and vice-versa). */
+        bool do_local = true;
+        bool do_letsencrypt = true;
+
+        if (domain_filter) {
+            const ph_cert_domain_t *found = NULL;
+            for (size_t i = 0; i < certs_cfg.domain_count; i++) {
+                if (strcmp(certs_cfg.domains[i].name, domain_filter) == 0) {
+                    found = &certs_cfg.domains[i];
+                    break;
+                }
+            }
+            if (!found) {
+                ph_log_error("certs: no domain matching '%s' in manifest",
+                             domain_filter);
+                ph_certs_config_destroy(&certs_cfg);
+                return PH_ERR_CONFIG;
+            }
+            do_local       = (found->mode == PH_CERT_LOCAL);
+            do_letsencrypt = (found->mode == PH_CERT_LETSENCRYPT);
+        }
+
+        if (do_local) {
+            exit_code = run_local(&certs_cfg, project_root, f_ca_only,
+                                   domain_filter, f_dry_run, f_force);
+        }
+        if (exit_code == 0 && !ph_signal_interrupted()
+            && do_letsencrypt && !f_ca_only) {
+            exit_code = run_letsencrypt(&certs_cfg, project_root,
+                                         domain_filter, "request",
+                                         directory_url,
                                          f_dry_run, f_force);
         }
     } else if (f_local) {
