@@ -1,6 +1,7 @@
 #include "phosphor/certs.h"
 #include "phosphor/alloc.h"
 #include "phosphor/log.h"
+#include "phosphor/path.h"
 #include "phosphor/platform.h"
 
 #include "toml.h"
@@ -49,6 +50,32 @@ static char **toml_get_string_array(toml_array_t *arr, size_t *out_count) {
 static int toml_get_int_default(toml_table_t *tbl, const char *key, int def) {
     toml_value_t v = toml_table_int(tbl, key);
     return v.ok ? (int)v.u.i : def;
+}
+
+/*
+ * audit fix: validate a manifest-supplied cert path field.
+ * rejects absolute paths and ".." traversal. NULL values are allowed so
+ * callers can pass optional fields without a branch.
+ * on violation: sets *err (if non-NULL) and returns PH_ERR.
+ */
+static ph_result_t validate_cert_path(const char *field, const char *value,
+                                       ph_error_t **err) {
+    if (!value) return PH_OK;
+    if (ph_path_is_absolute(value)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                "certs.%s must be a relative path inside the project: %s",
+                field, value);
+        return PH_ERR;
+    }
+    if (ph_path_has_traversal(value)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                "certs.%s must not contain '..' traversal: %s",
+                field, value);
+        return PH_ERR;
+    }
+    return PH_OK;
 }
 
 /* ---- parse domains ---- */
@@ -111,6 +138,20 @@ static ph_result_t parse_domains(toml_table_t *certs_tbl,
         domains[i].dir_name = toml_get_string(d, "dir_name");
         domains[i].email    = toml_get_string(d, "email");
         domains[i].webroot  = toml_get_string(d, "webroot");
+
+        /* audit fix: reject absolute/traversal in manifest-supplied cert
+         * path fields. These values flow straight into ph_path_join() +
+         * mkdir_p/write in certs_ca.c, certs_leaf.c, and acme_challenge.c,
+         * and without this gate a manifest could place CA material, leaf
+         * certs, or ACME challenge files outside the project root. */
+        if (validate_cert_path("domains.dir_name",
+                                domains[i].dir_name, err) != PH_OK ||
+            validate_cert_path("domains.webroot",
+                                domains[i].webroot, err) != PH_OK) {
+            *out_domains = domains;
+            *out_count = (size_t)len;
+            return PH_ERR;
+        }
 
         /* validation: letsencrypt requires email and webroot */
         if (domains[i].mode == PH_CERT_LETSENCRYPT) {
@@ -191,6 +232,13 @@ ph_result_t ph_certs_config_parse(const char *toml_path,
     if (!config->output_dir)
         config->output_dir = dup_str(PH_CERTS_DEFAULT_DIR);
 
+    /* audit fix: reject absolute/traversal for output_dir. */
+    if (validate_cert_path("output_dir", config->output_dir, err) != PH_OK) {
+        toml_free(root);
+        ph_certs_config_destroy(config);
+        return PH_ERR;
+    }
+
     config->ca_cn = toml_get_string(certs_tbl, "ca_cn");
     if (!config->ca_cn)
         config->ca_cn = dup_str(PH_CERTS_DEFAULT_CA_CN);
@@ -205,6 +253,14 @@ ph_result_t ph_certs_config_parse(const char *toml_path,
                                               PH_CERTS_DEFAULT_LEAF_DAYS);
 
     config->account_key = toml_get_string(certs_tbl, "account_key");
+
+    /* audit fix: reject absolute/traversal for account_key. without this
+     * gate, a manifest could point at an arbitrary private key file. */
+    if (validate_cert_path("account_key", config->account_key, err) != PH_OK) {
+        toml_free(root);
+        ph_certs_config_destroy(config);
+        return PH_ERR;
+    }
 
     /* domains */
     ph_result_t rc = parse_domains(certs_tbl, &config->domains,

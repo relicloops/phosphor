@@ -121,3 +121,77 @@ ph_result_t ph_cert_san_write_cnf(const char *cnf_path,
     ph_free(buf);
     return rc;
 }
+
+/* ---- effective SAN list ---- */
+
+/*
+ * audit fix (2026-04-08T11-07-17Z): previously the cert pipeline
+ * passed only domain->san to ph_acme_order_create / ph_acme_finalize
+ * / ph_cert_san_write_cnf, which meant manifests that set only
+ * [[certs.domains]] name = "example.com" tripped the count==0 reject
+ * in every downstream helper. This helper centralizes the
+ * "include the primary name at index 0" rule so every caller gets
+ * a list that starts with domain->name and cannot be empty.
+ */
+ph_result_t ph_cert_domain_effective_sans(const ph_cert_domain_t *domain,
+                                            char ***out_list,
+                                            size_t *out_count,
+                                            ph_error_t **err) {
+    if (!domain || !domain->name || !out_list || !out_count) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_INTERNAL, 0,
+                "ph_cert_domain_effective_sans: invalid arguments");
+        return PH_ERR;
+    }
+
+    *out_list = NULL;
+    *out_count = 0;
+
+    size_t cap = 1 + domain->san_count;
+    char **list = ph_alloc(cap * sizeof(*list));
+    if (!list) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_INTERNAL, 0,
+                "ph_cert_domain_effective_sans: allocation failed");
+        return PH_ERR;
+    }
+    for (size_t i = 0; i < cap; i++) list[i] = NULL;
+
+    /* duplicate a C string via the ph_alloc + memcpy idiom (no
+     * ph_strdup exists in the tree). */
+    size_t name_len = strlen(domain->name);
+    list[0] = ph_alloc(name_len + 1);
+    if (!list[0]) goto fail_alloc;
+    memcpy(list[0], domain->name, name_len + 1);
+    size_t count = 1;
+
+    for (size_t i = 0; i < domain->san_count; i++) {
+        const char *s = domain->san[i];
+        if (!s) continue;
+        if (strcmp(s, domain->name) == 0) continue;
+
+        size_t slen = strlen(s);
+        list[count] = ph_alloc(slen + 1);
+        if (!list[count]) goto fail_alloc;
+        memcpy(list[count], s, slen + 1);
+        count++;
+    }
+
+    *out_list = list;
+    *out_count = count;
+    return PH_OK;
+
+fail_alloc:
+    ph_cert_domain_sans_free(list, cap);
+    if (err)
+        *err = ph_error_createf(PH_ERR_INTERNAL, 0,
+            "ph_cert_domain_effective_sans: allocation failed");
+    return PH_ERR;
+}
+
+void ph_cert_domain_sans_free(char **list, size_t count) {
+    if (!list) return;
+    for (size_t i = 0; i < count; i++)
+        ph_free(list[i]);
+    ph_free(list);
+}

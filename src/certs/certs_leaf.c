@@ -36,6 +36,17 @@ ph_result_t ph_certs_gen_leaf(const ph_certs_config_t *config,
     ph_free(certs_dir);
     if (!ca_dir) { ph_free(leaf_dir); return PH_ERR; }
 
+    /* audit fix: belt-and-braces containment re-check for leaf_dir. */
+    if (!ph_path_is_under(leaf_dir, project_root)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                "certs: resolved leaf directory escapes project root: %s",
+                leaf_dir);
+        ph_free(leaf_dir);
+        ph_free(ca_dir);
+        return PH_ERR;
+    }
+
     char *ca_key = ph_path_join(ca_dir, "root.key");
     char *ca_crt = ph_path_join(ca_dir, "root.crt");
     char *privkey_path = ph_path_join(leaf_dir, "privkey.pem");
@@ -43,8 +54,21 @@ ph_result_t ph_certs_gen_leaf(const ph_certs_config_t *config,
     char *csr_path = ph_path_join(leaf_dir, "leaf.csr");
     char *cnf_path = ph_path_join(leaf_dir, "san.cnf");
 
+    /* audit fix (2026-04-08T11-07-17Z): effective SAN list always
+     * has domain->name at index 0 followed by unique entries from
+     * domain->san. Declared here so every goto label can free it
+     * unconditionally, and built before dry-run so logging mirrors
+     * the real pipeline. */
+    char **eff_sans = NULL;
+    size_t eff_count = 0;
+
     if (!ca_key || !ca_crt || !privkey_path || !fullchain_path ||
         !csr_path || !cnf_path) {
+        goto fail_alloc;
+    }
+
+    if (ph_cert_domain_effective_sans(domain, &eff_sans, &eff_count,
+                                        err) != PH_OK) {
         goto fail_alloc;
     }
 
@@ -53,9 +77,9 @@ ph_result_t ph_certs_gen_leaf(const ph_certs_config_t *config,
         ph_log_info("  key: %s (%d bits)", privkey_path, config->leaf_bits);
         ph_log_info("  cert: %s (signed by %s, %d days)",
                      fullchain_path, ca_crt, config->leaf_days);
-        ph_log_info("  SANs: %zu", domain->san_count);
-        for (size_t i = 0; i < domain->san_count; i++)
-            ph_log_info("    %s", domain->san[i]);
+        ph_log_info("  SANs: %zu", eff_count);
+        for (size_t i = 0; i < eff_count; i++)
+            ph_log_info("    %s", eff_sans[i]);
         goto success;
     }
 
@@ -126,13 +150,13 @@ ph_result_t ph_certs_gen_leaf(const ph_certs_config_t *config,
 
     if (ph_signal_interrupted()) goto fail_signal;
 
-    /* step 2: write SAN config file */
-    if (domain->san_count > 0) {
-        if (ph_cert_san_write_cnf(cnf_path,
-                                    (const char *const *)domain->san,
-                                    domain->san_count, err) != PH_OK) {
-            goto fail;
-        }
+    /* step 2: write SAN config file (always; eff_sans is guaranteed
+     * to contain at least domain->name at index 0, so
+     * ph_cert_san_write_cnf never sees count == 0). */
+    if (ph_cert_san_write_cnf(cnf_path,
+                                (const char *const *)eff_sans,
+                                eff_count, err) != PH_OK) {
+        goto fail;
     }
 
     if (ph_signal_interrupted()) goto fail_signal;
@@ -154,7 +178,7 @@ ph_result_t ph_certs_gen_leaf(const ph_certs_config_t *config,
         ph_argv_push(&b, "-subj");
         ph_argv_push(&b, subj);
         ph_argv_push(&b, "-config");
-        ph_argv_push(&b, domain->san_count > 0 ? cnf_path : "/dev/null");
+        ph_argv_push(&b, cnf_path);
         char **argv = ph_argv_finalize(&b);
         if (!argv) goto fail;
 
@@ -192,12 +216,14 @@ ph_result_t ph_certs_gen_leaf(const ph_certs_config_t *config,
         ph_argv_push(&b, "-days");
         ph_argv_pushf(&b, "%d", config->leaf_days);
         ph_argv_push(&b, "-sha256");
-        if (domain->san_count > 0) {
-            ph_argv_push(&b, "-extfile");
-            ph_argv_push(&b, cnf_path);
-            ph_argv_push(&b, "-extensions");
-            ph_argv_push(&b, "v3_req");
-        }
+        /* audit fix (2026-04-08T11-07-17Z): always carry the SAN
+         * extension through to the signed cert, because eff_sans
+         * is guaranteed non-empty and the CN-only path produced
+         * certs that modern TLS clients reject. */
+        ph_argv_push(&b, "-extfile");
+        ph_argv_push(&b, cnf_path);
+        ph_argv_push(&b, "-extensions");
+        ph_argv_push(&b, "v3_req");
         char **argv = ph_argv_finalize(&b);
         if (!argv) goto fail;
 
@@ -221,6 +247,7 @@ ph_result_t ph_certs_gen_leaf(const ph_certs_config_t *config,
     ph_log_info("certs: leaf %s -> %s", domain->name, fullchain_path);
 
 success:
+    ph_cert_domain_sans_free(eff_sans, eff_count);
     ph_free(ca_dir);
     ph_free(ca_key);
     ph_free(ca_crt);
@@ -239,6 +266,7 @@ fail:
     unlink(csr_path);
     unlink(cnf_path);
 fail_alloc:
+    ph_cert_domain_sans_free(eff_sans, eff_count);
     ph_free(ca_dir);
     ph_free(ca_key);
     ph_free(ca_crt);

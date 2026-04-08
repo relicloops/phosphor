@@ -54,6 +54,19 @@ ph_result_t ph_certs_gen_ca(const ph_certs_config_t *config,
     ph_free(certs_dir);
     if (!ca_dir) return PH_ERR;
 
+    /* audit fix: belt-and-braces containment re-check. parse-time
+     * validation already rejects absolute/traversal for output_dir, but
+     * if a symlink is swapped between parse and use, or project_root is
+     * non-canonical, canonicalize and re-verify before we mkdir/write. */
+    if (!ph_path_is_under(ca_dir, project_root)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                "certs: resolved CA directory escapes project root: %s",
+                ca_dir);
+        ph_free(ca_dir);
+        return PH_ERR;
+    }
+
     char *key_path = ph_path_join(ca_dir, "root.key");
     char *crt_path = ph_path_join(ca_dir, "root.crt");
     if (!key_path || !crt_path) {

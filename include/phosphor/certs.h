@@ -96,6 +96,30 @@ ph_result_t ph_cert_san_write_cnf(const char *cnf_path,
                                     size_t san_count,
                                     ph_error_t **err);
 
+/*
+ * ph_cert_domain_effective_sans -- build the SAN list that must
+ * appear in the CSR / ACME order for a domain entry.
+ *
+ * Returns a freshly-allocated list where *out_list[0] is always
+ * domain->name, followed by each unique entry from domain->san that
+ * does not string-equal domain->name. The list is guaranteed to
+ * contain at least one element (domain->name).
+ *
+ * ownership:
+ *   *out_list        -- owner: caller (free via ph_cert_domain_sans_free)
+ *   *out_list[i]     -- owner: caller (freed by ph_cert_domain_sans_free)
+ */
+ph_result_t ph_cert_domain_effective_sans(const ph_cert_domain_t *domain,
+                                            char ***out_list,
+                                            size_t *out_count,
+                                            ph_error_t **err);
+
+/*
+ * ph_cert_domain_sans_free -- free a list allocated by
+ * ph_cert_domain_effective_sans. Safe to call with list == NULL.
+ */
+void ph_cert_domain_sans_free(char **list, size_t count);
+
 /* ---- local CA generation ---- */
 
 /*
