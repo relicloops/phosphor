@@ -43,15 +43,15 @@ static const ph_argspec_t create_specs[] = {
     {"dry-run", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
      "print planned operations without creating files"},
     {"toml", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
-     "output report in TOML format (reserved)"},
+     "[reserved] output report in TOML format"},
     {"allow-hooks", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
-     "run post-create hooks defined in the template (reserved)"},
+     "[reserved] run post-create hooks defined in the template"},
     {"yes", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
-     "auto-confirm all prompts (reserved)"},
+     "[reserved] auto-confirm all prompts"},
     {"normalize-eol", PH_TYPE_ENUM, PH_FORM_VALUED, false, NULL, eol_choices,
-     2, "normalize line endings in rendered files (reserved)"},
+     2, "[reserved] normalize line endings in rendered files"},
     {"allow-hidden", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
-     "include hidden (dot) files from the template (reserved)"},
+     "[reserved] include hidden (dot) files from the template"},
     {"verbose", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
      "enable verbose output"},
     {"checksum", PH_TYPE_STRING, PH_FORM_VALUED, false, NULL, NULL, 0,
@@ -77,7 +77,7 @@ static const ph_argspec_t build_specs[] = {
     {"verbose", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
      "enable debug-level logging"},
     {"normalize-eol", PH_TYPE_ENUM, PH_FORM_VALUED, false, NULL, eol_choices,
-     2, "normalize line endings (reserved)"},
+     2, "[reserved] normalize line endings"},
     {"legacy-scripts", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
      "use legacy shell scripts instead of native esbuild (deprecated)"},
 };
@@ -109,7 +109,7 @@ static const ph_argspec_t doctor_specs[] = {
     {"verbose", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
      "enable debug-level logging"},
     {"toml", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
-     "output diagnostic report in TOML format (reserved)"},
+     "[reserved] output diagnostic report in TOML format"},
 };
 
 /*
@@ -257,12 +257,9 @@ static const ph_argspec_t serve_specs[] = {
 };
 
 /*
- * Filament command -- open a file in the filament editor
+ * Filament command -- [experimental] reserved for future functionality.
+ * No flags until the editor is implemented.
  */
-static const ph_argspec_t filament_specs[] = {
-    {"path", PH_TYPE_PATH, PH_FORM_VALUED, true, NULL, NULL, 0,
-     "file to open in filament (absolute or relative path)"},
-};
 
 /* version and help have no flags (appendix E) */
 
@@ -287,8 +284,8 @@ static const ph_cmd_def_t phosphor_commands[] = {
 #endif
     {"serve", PHOSPHOR_CMD_SERVE, serve_specs, ARRAY_LEN(serve_specs),
      false, "start neonsignal dev server for the project"},
-    {"filament", PHOSPHOR_CMD_FILAMENT, filament_specs, ARRAY_LEN(filament_specs),
-     false, "[experimental] open a file in the filament editor"},
+    {"filament", PHOSPHOR_CMD_FILAMENT, NULL, 0, false,
+     "[experimental] reserved for future functionality"},
     {"version", PHOSPHOR_CMD_VERSION, NULL, 0, false,
      "print phosphor version"},
     {"help", PHOSPHOR_CMD_HELP, NULL, 0, true,
