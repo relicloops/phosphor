@@ -7,15 +7,20 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <dirent.h>
 #include <errno.h>
 #include <unistd.h>
 #include <time.h>
 
+/* mkdtemp is POSIX but not exposed under strict c17 + _POSIX_C_SOURCE=200809L
+ * on all platforms; provide an explicit declaration. */
+extern char *mkdtemp(char *tmpl);
+
 #define STAGING_PREFIX ".phosphor-staging-"
 
-ph_result_t ph_staging_create(const char *dest_path, ph_staging_t *out,
-                               ph_error_t **err) {
+ph_result_t ph_staging_create(const char *dest_path, bool force,
+                               ph_staging_t *out, ph_error_t **err) {
     if (!dest_path || !out) {
         if (err)
             *err = ph_error_createf(PH_ERR_INTERNAL, 0,
@@ -24,6 +29,7 @@ ph_result_t ph_staging_create(const char *dest_path, ph_staging_t *out,
     }
 
     memset(out, 0, sizeof(*out));
+    out->force = force;
 
     /* parent directory of destination */
     char *parent = ph_path_dirname(dest_path);
@@ -43,26 +49,33 @@ ph_result_t ph_staging_create(const char *dest_path, ph_staging_t *out,
         return PH_ERR;
     }
 
-    /* build staging dir name: .phosphor-staging-<pid>-<timestamp> */
-    char name[128];
-    snprintf(name, sizeof(name), STAGING_PREFIX "%d-%lld",
-             (int)getpid(), (long long)time(NULL));
-
-    char *staging_path = ph_path_join(parent, name);
-    ph_free(parent);
-
+    /* build staging dir template and create via mkdtemp.
+     * audit fix: the previous pid+timestamp template was predictable and a
+     * local attacker could pre-create the path with a symlink, hijacking the
+     * staging dir. mkdtemp atomically creates a unique 0700 directory that
+     * cannot be pre-empted. Since the parent varies per-call, the template
+     * must be heap-allocated rather than stack. */
+    const char *sfx = STAGING_PREFIX "XXXXXX";
+    size_t parent_len = strlen(parent);
+    size_t sfx_len = strlen(sfx);
+    char *staging_path = ph_alloc(parent_len + 1 + sfx_len + 1);
     if (!staging_path) {
+        ph_free(parent);
         if (err)
             *err = ph_error_createf(PH_ERR_INTERNAL, 0,
                 "failed to build staging path");
         return PH_ERR;
     }
+    memcpy(staging_path, parent, parent_len);
+    staging_path[parent_len] = '/';
+    memcpy(staging_path + parent_len + 1, sfx, sfx_len + 1);
+    ph_free(parent);
 
-    /* create the staging directory */
-    if (ph_fs_mkdir_p(staging_path, 0755) != PH_OK) {
+    if (mkdtemp(staging_path) == NULL) {
         if (err)
             *err = ph_error_createf(PH_ERR_FS, 0,
-                "cannot create staging directory: %s", staging_path);
+                "cannot create staging directory via mkdtemp: %s",
+                staging_path);
         ph_free(staging_path);
         return PH_ERR;
     }
@@ -85,34 +98,87 @@ ph_result_t ph_staging_commit(ph_staging_t *staging, ph_error_t **err) {
         return PH_ERR;
     }
 
-    /* try rename first (atomic on same filesystem) */
-    if (ph_fs_rename(staging->path, staging->dest_path) == PH_OK) {
+    /* audit fix (2026-04-07T20-37-55Z): bypass ph_fs_rename so we can
+     * inspect errno from rename(2) directly. The previous implementation
+     * fell back to copytree on ANY rename failure, which silently turned
+     * --force into a merge instead of a replace and masked unrelated
+     * rename errors. */
+    if (rename(staging->path, staging->dest_path) == 0) {
         staging->active = false;
         ph_log_info("staging committed: %s -> %s",
                     staging->path, staging->dest_path);
         return PH_OK;
     }
+    int saved_errno = errno;
 
-    /* EXDEV fallback: copytree + remove staging */
-    ph_log_warn("staging rename failed (cross-device?), falling back to copy");
+    /* dest already exists. with --force, replace it; otherwise hard error. */
+    if (saved_errno == EEXIST || saved_errno == ENOTEMPTY ||
+        saved_errno == ENOTDIR) {
+        if (!staging->force) {
+            if (err)
+                *err = ph_error_createf(PH_ERR_FS, saved_errno,
+                    "staging commit: destination already exists: %s "
+                    "(rerun with --force to replace)", staging->dest_path);
+            return PH_ERR;
+        }
 
-    if (ph_fs_copytree(staging->path, staging->dest_path,
-                        NULL, NULL, err) != PH_OK)
-        return PH_ERR;
+        ph_log_info("staging commit: removing existing destination "
+                     "before replace: %s", staging->dest_path);
 
-    /* remove staging dir */
-    ph_error_t *rm_err = NULL;
-    if (ph_fs_rmtree(staging->path, &rm_err) != PH_OK) {
-        ph_log_warn("failed to remove staging after copy: %s",
-                    rm_err ? rm_err->message : "unknown");
+        ph_error_t *rm_err = NULL;
+        if (ph_fs_rmtree(staging->dest_path, &rm_err) != PH_OK) {
+            if (err) {
+                *err = ph_error_createf(PH_ERR_FS, 0,
+                    "staging commit: cannot remove existing destination "
+                    "'%s': %s", staging->dest_path,
+                    rm_err && rm_err->message ? rm_err->message : "unknown");
+            }
+            ph_error_destroy(rm_err);
+            return PH_ERR;
+        }
         ph_error_destroy(rm_err);
-        /* not a fatal error -- files are committed */
+
+        if (rename(staging->path, staging->dest_path) == 0) {
+            staging->active = false;
+            ph_log_info("staging committed (replaced): %s -> %s",
+                        staging->path, staging->dest_path);
+            return PH_OK;
+        }
+        saved_errno = errno;
+        /* fall through: a non-EXDEV failure after replace is a real error */
     }
 
-    staging->active = false;
-    ph_log_info("staging committed (copy fallback): %s -> %s",
-                staging->path, staging->dest_path);
-    return PH_OK;
+    /* EXDEV: legitimate cross-device case, fall back to copytree. */
+    if (saved_errno == EXDEV) {
+        ph_log_warn("staging rename hit EXDEV (cross-device), "
+                     "falling back to copytree");
+
+        if (ph_fs_copytree(staging->path, staging->dest_path,
+                            NULL, NULL, err) != PH_OK)
+            return PH_ERR;
+
+        /* remove staging dir */
+        ph_error_t *rm_err = NULL;
+        if (ph_fs_rmtree(staging->path, &rm_err) != PH_OK) {
+            ph_log_warn("failed to remove staging after copy: %s",
+                        rm_err && rm_err->message ? rm_err->message : "unknown");
+            ph_error_destroy(rm_err);
+            /* not fatal -- files are committed */
+        }
+
+        staging->active = false;
+        ph_log_info("staging committed (copy fallback): %s -> %s",
+                    staging->path, staging->dest_path);
+        return PH_OK;
+    }
+
+    /* any other errno is a real error and must NOT be silently downgraded
+     * into a merging copy. */
+    if (err)
+        *err = ph_error_createf(PH_ERR_FS, saved_errno,
+            "staging commit: rename '%s' -> '%s' failed: %s",
+            staging->path, staging->dest_path, strerror(saved_errno));
+    return PH_ERR;
 }
 
 ph_result_t ph_staging_cleanup(ph_staging_t *staging, ph_error_t **err) {

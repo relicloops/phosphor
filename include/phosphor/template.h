@@ -54,6 +54,12 @@ const char *ph_resolved_var_get(const ph_resolved_var_t *vars, size_t count,
 typedef struct {
     ph_op_kind_t  kind;
     char         *from_abs;     /* absolute source path (NULL for mkdir) */
+    char         *from_rel;     /* manifest-relative `from` after <<var>>
+                                 * substitution; used by ph_plan_execute to
+                                 * apply full filter rules (metadata,
+                                 * exclude, deny) consistently for both
+                                 * single-file and directory ops. NULL when
+                                 * `from` is absent. */
     char         *to_abs;       /* absolute destination path */
     char         *mode;         /* octal mode string or NULL */
     bool          overwrite;
@@ -69,6 +75,11 @@ typedef struct {
     ph_planned_op_t *ops;
     size_t           count;
     size_t           cap;
+    /* containment roots (owned, heap-allocated copies) -- set by
+     * ph_plan_build; used by ph_plan_execute for belt-and-suspenders
+     * containment re-verification just before any filesystem mutation. */
+    char            *template_root;
+    char            *dest_dir;
 } ph_plan_t;
 
 /* ---- plan statistics ---- */
@@ -110,18 +121,29 @@ typedef struct {
     char *path;         /* staging directory absolute path */
     char *dest_path;    /* final destination absolute path */
     bool  active;       /* staging created and not committed */
+    bool  force;        /* if true, ph_staging_commit replaces an existing
+                         * dest_path instead of merging into it. set by the
+                         * caller (e.g. create/glow with --force). */
 } ph_staging_t;
 
 /*
- * ph_staging_create -- create a staging directory named
- * .phosphor-staging-<pid>-<timestamp> in the parent of dest_path.
+ * ph_staging_create -- create a staging directory via mkdtemp(3) in the
+ * parent of dest_path. The `force` flag is recorded on the staging handle
+ * so ph_staging_commit can decide between replace and merge semantics.
  */
-ph_result_t ph_staging_create(const char *dest_path, ph_staging_t *out,
-                               ph_error_t **err);
+ph_result_t ph_staging_create(const char *dest_path, bool force,
+                               ph_staging_t *out, ph_error_t **err);
 
 /*
  * ph_staging_commit -- rename staging to dest_path.
- * EXDEV fallback: copytree + remove staging, logs at WARN.
+ *
+ * Errno discrimination on rename(2):
+ *   - success: done.
+ *   - EXDEV: cross-device, fall back to copytree + remove staging.
+ *   - EEXIST / ENOTEMPTY / ENOTDIR + force: rmtree dest, retry rename.
+ *   - EEXIST / ENOTEMPTY / ENOTDIR + !force: hard error (caller should
+ *     have rejected this earlier in preflight).
+ *   - any other errno: hard error, do NOT silently fall through to copy.
  */
 ph_result_t ph_staging_commit(ph_staging_t *staging, ph_error_t **err);
 

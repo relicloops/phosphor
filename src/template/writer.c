@@ -20,16 +20,50 @@ typedef struct {
 #ifdef PHOSPHOR_HAS_PCRE2
     ph_regex_t **exclude_re;
     size_t       exclude_re_count;
+    ph_regex_t **deny_re;
+    size_t       deny_re_count;
 #endif
+    /* audit fix: mutable deny-hit state populated by the filter callback
+     * during recursive walks. ph_fs_copytree's filter API is bool-only, so
+     * the callback records the first denied path on the context and returns
+     * false (skip). The caller inspects deny_hit after the walk and fails
+     * the operation. This is the only way to enforce manifest deny rules on
+     * descendants of a directory copy/render. */
+    bool  deny_hit;
+    char *deny_path;    /* strdup'd on first hit; owned by ctx */
+    char *deny_pattern; /* strdup'd on first hit; owned by ctx */
 } ph_exec_filter_ctx_t;
 
+/* duplicate a C string into ph_alloc memory; NULL-safe */
+static char *dup_cstr(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char *r = ph_alloc(n + 1);
+    if (r) memcpy(r, s, n + 1);
+    return r;
+}
+
+/* reset mutable deny-hit state on the context between ops */
+static void filter_ctx_reset_deny(ph_exec_filter_ctx_t *fctx) {
+    if (!fctx) return;
+    ph_free(fctx->deny_path);
+    ph_free(fctx->deny_pattern);
+    fctx->deny_path = NULL;
+    fctx->deny_pattern = NULL;
+    fctx->deny_hit = false;
+}
+
 /*
- * exec_filter_cb -- copytree filter callback implementing exclude patterns.
- * returns true to include, false to skip.
+ * exec_filter_cb -- copytree filter callback implementing exclude and deny
+ * patterns. returns true to include, false to skip.
+ *
+ * a deny hit is recorded on the context (fctx->deny_hit + deny_path +
+ * deny_pattern) and the entry is skipped. the caller MUST check deny_hit
+ * after the walk and fail the operation.
  */
 static bool exec_filter_cb(const char *rel_path, bool is_dir, void *ctx) {
     (void)is_dir;
-    const ph_exec_filter_ctx_t *fctx = ctx;
+    ph_exec_filter_ctx_t *fctx = ctx;
     if (!fctx || !fctx->filters) return true;
 
     const ph_filters_t *f = fctx->filters;
@@ -57,6 +91,34 @@ static bool exec_filter_cb(const char *rel_path, bool is_dir, void *ctx) {
         if (fctx->exclude_re[i] &&
             ph_regex_match(fctx->exclude_re[i], rel_path)) {
             ph_log_trace("filter: excluded by regex: %s", rel_path);
+            return false;
+        }
+    }
+#endif
+
+    /* audit fix: recursive deny enforcement. previously deny/deny_regex were
+     * only checked once against the basename of op->from_abs, so nested
+     * denied files inside a directory copy/render were still propagated. */
+    for (size_t i = 0; i < f->deny_count; i++) {
+        if (f->deny[i] && ph_fs_fnmatch(f->deny[i], rel_path)) {
+            if (!fctx->deny_hit) {
+                fctx->deny_path = dup_cstr(rel_path);
+                fctx->deny_pattern = dup_cstr(f->deny[i]);
+                fctx->deny_hit = true;
+            }
+            return false;
+        }
+    }
+
+#ifdef PHOSPHOR_HAS_PCRE2
+    for (size_t i = 0; i < fctx->deny_re_count; i++) {
+        if (fctx->deny_re[i] &&
+            ph_regex_match(fctx->deny_re[i], rel_path)) {
+            if (!fctx->deny_hit) {
+                fctx->deny_path = dup_cstr(rel_path);
+                fctx->deny_pattern = dup_cstr("<deny_regex>");
+                fctx->deny_hit = true;
+            }
             return false;
         }
     }
@@ -103,6 +165,82 @@ static ph_result_t check_deny(const char *rel_path,
     return PH_OK;
 }
 
+/*
+ * single_file_apply_filters -- audit fix (2026-04-07T20-37-55Z).
+ *
+ * Apply the full filter model (metadata, exclude, exclude_regex, deny,
+ * deny_regex) to a non-directory copy/render op so single-file ops behave
+ * the same as descendants of a directory walk.
+ *
+ * Verdicts:
+ *   PH_OK + *out_skip = false  -> proceed with op
+ *   PH_OK + *out_skip = true   -> silently skip (metadata or exclude match)
+ *   PH_ERR                     -> hard error (deny match), err is set
+ *
+ * The relative path is taken from op->from_rel (recorded by ph_plan_build
+ * after <<var>> rendering). If from_rel is missing for any reason, fall
+ * back to the basename of from_abs so the behavior is at least no worse
+ * than the previous basename-only check.
+ */
+static ph_result_t single_file_apply_filters(
+        const ph_planned_op_t *op,
+        const ph_filters_t *filters,
+#ifdef PHOSPHOR_HAS_PCRE2
+        ph_regex_t **exclude_re, size_t exclude_re_count,
+        ph_regex_t **deny_re, size_t deny_re_count,
+#endif
+        bool *out_skip,
+        ph_error_t **err) {
+    if (out_skip) *out_skip = false;
+    if (!filters || !op || !op->from_abs) return PH_OK;
+
+    const char *rel;
+    if (op->from_rel && op->from_rel[0] != '\0') {
+        rel = op->from_rel;
+    } else {
+        const char *slash = strrchr(op->from_abs, '/');
+        rel = slash ? slash + 1 : op->from_abs;
+    }
+
+    const char *bn = strrchr(rel, '/');
+    bn = bn ? bn + 1 : rel;
+
+    /* metadata deny: silent skip */
+    if (ph_metadata_is_denied(bn)) {
+        ph_log_trace("filter: denied metadata file: %s", rel);
+        if (out_skip) *out_skip = true;
+        return PH_OK;
+    }
+
+    /* glob exclude: silent skip */
+    for (size_t i = 0; i < filters->exclude_count; i++) {
+        if (filters->exclude[i] && ph_fs_fnmatch(filters->exclude[i], rel)) {
+            ph_log_trace("filter: excluded by glob '%s': %s",
+                          filters->exclude[i], rel);
+            if (out_skip) *out_skip = true;
+            return PH_OK;
+        }
+    }
+
+#ifdef PHOSPHOR_HAS_PCRE2
+    /* regex exclude: silent skip */
+    for (size_t i = 0; i < exclude_re_count; i++) {
+        if (exclude_re[i] && ph_regex_match(exclude_re[i], rel)) {
+            ph_log_trace("filter: excluded by regex: %s", rel);
+            if (out_skip) *out_skip = true;
+            return PH_OK;
+        }
+    }
+#endif
+
+    /* deny (glob + regex): hard error against the FULL relative path */
+    return check_deny(rel, filters,
+#ifdef PHOSPHOR_HAS_PCRE2
+                       deny_re, deny_re_count,
+#endif
+                       err);
+}
+
 /* ---- regex cleanup helpers ---- */
 
 #ifdef PHOSPHOR_HAS_PCRE2
@@ -120,7 +258,9 @@ typedef struct {
     const ph_resolved_var_t *vars;
     size_t                   var_count;
     const ph_filters_t      *filters;
-    const ph_exec_filter_ctx_t *filter_ctx;
+    ph_exec_filter_ctx_t    *filter_ctx;  /* audit fix: non-const so the
+                                             filter callback can record a
+                                             deny hit on the context */
     const char              *newline;
     ph_plan_stats_t         *stats;
 } rendertree_ctx_t;
@@ -197,7 +337,7 @@ static ph_result_t rendertree_recurse(const char *src, const char *dst,
         /* apply filter */
         if (rctx->filter_ctx && rctx->filter_ctx->filters) {
             if (!exec_filter_cb(rel_child, st.is_dir,
-                                 (void *)rctx->filter_ctx)) {
+                                 rctx->filter_ctx)) {
                 ph_free(src_child);
                 ph_free(dst_child);
                 ph_free(rel_child);
@@ -360,6 +500,10 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                     goto cleanup_err;
             }
         }
+        /* audit fix: the recursive filter callback enforces deny_regex on
+         * every descendant; wire the compiled regexes into the ctx. */
+        filter_ctx.deny_re = deny_re;
+        filter_ctx.deny_re_count = deny_re_count;
     }
 #endif
 
@@ -379,18 +523,53 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
             continue;
         }
 
-        /* deny check for COPY and RENDER operations */
+        /* audit fix (2026-04-07T20-37-55Z): unified filter enforcement for
+         * COPY and RENDER. Previously a single basename-only deny check ran
+         * here, leaving single-file ops free of metadata, exclude, and
+         * full-path deny enforcement. Directory ops still rely on their
+         * recursive walker, so we only apply the silent metadata/exclude
+         * skip path when the source is not a directory; the deny check is
+         * applied uniformly to both cases against the full relative path. */
         if ((op->kind == PH_OP_COPY || op->kind == PH_OP_RENDER) &&
             op->from_abs && filters) {
-            const char *rel = strrchr(op->from_abs, '/');
-            rel = rel ? rel + 1 : op->from_abs;
+            ph_fs_stat_t pre_st;
+            bool pre_is_dir = false;
+            if (ph_fs_stat(op->from_abs, &pre_st) == PH_OK && pre_st.exists)
+                pre_is_dir = pre_st.is_dir;
 
-            if (check_deny(rel, filters,
+            if (!pre_is_dir) {
+                bool sf_skip = false;
+                if (single_file_apply_filters(op, filters,
 #ifdef PHOSPHOR_HAS_PCRE2
-                            deny_re, deny_re_count,
+                                               exclude_re, exclude_re_count,
+                                               deny_re, deny_re_count,
 #endif
-                            err) != PH_OK)
-                goto cleanup_err;
+                                               &sf_skip, err) != PH_OK)
+                    goto cleanup_err;
+                if (sf_skip) {
+                    ph_log_debug("op %zu: skipped (filter)", i);
+                    stats->skipped++;
+                    continue;
+                }
+            } else {
+                /* directory op: still enforce top-level deny on the full
+                 * manifest-relative path so a manifest cannot bypass deny
+                 * by writing `from = "denied/dir"`. nested entries are
+                 * checked by exec_filter_cb during the walk. */
+                const char *rel;
+                if (op->from_rel && op->from_rel[0] != '\0') {
+                    rel = op->from_rel;
+                } else {
+                    const char *slash = strrchr(op->from_abs, '/');
+                    rel = slash ? slash + 1 : op->from_abs;
+                }
+                if (check_deny(rel, filters,
+#ifdef PHOSPHOR_HAS_PCRE2
+                                deny_re, deny_re_count,
+#endif
+                                err) != PH_OK)
+                    goto cleanup_err;
+            }
         }
 
         switch (op->kind) {
@@ -435,11 +614,24 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
             }
 
             if (st.is_dir) {
+                /* audit fix: reset deny-hit state before the walk and
+                 * check after. a hit inside the recursive walker is a hard
+                 * error, even though the walker only saw a skip. */
+                filter_ctx_reset_deny(&filter_ctx);
                 if (ph_fs_copytree(op->from_abs, op->to_abs,
                                     filters ? exec_filter_cb : NULL,
                                     filters ? &filter_ctx : NULL,
                                     err) != PH_OK)
                     goto cleanup_err;
+                if (filter_ctx.deny_hit) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                            "copy op %zu: nested file '%s' matches deny "
+                            "pattern '%s'", i,
+                            filter_ctx.deny_path ? filter_ctx.deny_path : "?",
+                            filter_ctx.deny_pattern ? filter_ctx.deny_pattern : "?");
+                    goto cleanup_err;
+                }
                 stats->files_copied++;
             } else {
                 /* ensure parent dir */
@@ -495,6 +687,9 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
             }
 
             if (st.is_dir) {
+                /* audit fix: reset deny-hit state before the walk and
+                 * check after. see copy op above for rationale. */
+                filter_ctx_reset_deny(&filter_ctx);
                 rendertree_ctx_t rctx = {
                     .vars       = vars,
                     .var_count  = var_count,
@@ -506,6 +701,15 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                 if (rendertree_recurse(op->from_abs, op->to_abs,
                                         &rctx, "", 0, err) != PH_OK)
                     goto cleanup_err;
+                if (filter_ctx.deny_hit) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                            "render op %zu: nested file '%s' matches deny "
+                            "pattern '%s'", i,
+                            filter_ctx.deny_path ? filter_ctx.deny_path : "?",
+                            filter_ctx.deny_pattern ? filter_ctx.deny_pattern : "?");
+                    goto cleanup_err;
+                }
             } else {
                 /* ensure parent dir */
                 char *dir = ph_path_dirname(op->to_abs);
@@ -609,6 +813,19 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                 goto cleanup_err;
             }
 
+            /* audit fix: belt-and-suspenders containment re-check.
+             * must stay under dest_dir so we never rmtree outside the
+             * destination tree, even if a symlink was swapped between
+             * plan build and execute. */
+            if (plan->dest_dir &&
+                !ph_path_is_under(target, plan->dest_dir)) {
+                if (err)
+                    *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                        "remove op %zu: target escapes dest_dir: %s",
+                        i, target);
+                goto cleanup_err;
+            }
+
             if (ph_fs_rmtree(target, err) != PH_OK)
                 goto cleanup_err;
             ph_log_info("  remove %s", target);
@@ -624,6 +841,7 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
     free_regex_array(exclude_re, exclude_re_count);
     free_regex_array(deny_re, deny_re_count);
 #endif
+    filter_ctx_reset_deny(&filter_ctx);
     return PH_OK;
 
 cleanup_err:
@@ -631,5 +849,6 @@ cleanup_err:
     free_regex_array(exclude_re, exclude_re_count);
     free_regex_array(deny_re, deny_re_count);
 #endif
+    filter_ctx_reset_deny(&filter_ctx);
     return PH_ERR;
 }

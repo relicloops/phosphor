@@ -2,6 +2,7 @@
 #include "phosphor/platform.h"
 #include "phosphor/alloc.h"
 #include "phosphor/log.h"
+#include "phosphor/path.h"
 
 #include "toml.h"
 
@@ -150,6 +151,16 @@ static ph_result_t parse_template_meta(toml_table_t *root,
         if (err)
             *err = ph_error_createf(PH_ERR_CONFIG, 0,
                                      "template.source_root is required");
+        return PH_ERR;
+    }
+
+    /* audit fix: reject absolute or traversing source_root at parse time */
+    if (ph_path_is_absolute(out->source_root) ||
+        ph_path_has_traversal(out->source_root)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                "template.source_root must be relative without traversal: %s",
+                out->source_root);
         return PH_ERR;
     }
 
@@ -468,6 +479,30 @@ static ph_result_t parse_ops(toml_table_t *root,
         ops[i].to   = toml_get_string(o, "to");
         ops[i].mode = toml_get_string(o, "mode");
 
+        /* audit fix: reject absolute or traversing paths at parse time */
+        if (ops[i].from &&
+            (ph_path_is_absolute(ops[i].from) ||
+             ph_path_has_traversal(ops[i].from))) {
+            if (err)
+                *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                    "ops[%d].from contains absolute or traversing path: %s",
+                    i, ops[i].from);
+            *out_ops = ops;
+            *out_count = (size_t)len;
+            return PH_ERR;
+        }
+        if (ops[i].to &&
+            (ph_path_is_absolute(ops[i].to) ||
+             ph_path_has_traversal(ops[i].to))) {
+            if (err)
+                *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                    "ops[%d].to contains absolute or traversing path: %s",
+                    i, ops[i].to);
+            *out_ops = ops;
+            *out_count = (size_t)len;
+            return PH_ERR;
+        }
+
         toml_value_t ow = toml_table_bool(o, "overwrite");
         ops[i].overwrite = ow.ok && ow.u.b;
 
@@ -582,8 +617,7 @@ ph_result_t ph_manifest_load(const char *path, ph_manifest_t *out,
         if (err)
             *err = ph_error_createf(PH_ERR_USAGE, 0,
                 "manifest uses regex filters (exclude_regex/deny_regex) "
-                "but phosphor was compiled without PCRE2 support; "
-                "recompile with: meson setup build -Dpcre2=true");
+                "but regex filters are not available in this build");
         toml_free(root);
         return PH_ERR;
 #endif
