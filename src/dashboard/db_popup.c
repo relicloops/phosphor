@@ -236,17 +236,17 @@ static void draw_ph_help_content(ph_dashboard_t *db) {
     wattroff(w, COLOR_PAIR(CP_POPUP_KEY) | A_BOLD);
 
     struct { const char *cmd; const char *desc; } cmds[] = {
-        { "create",   "Scaffold a new project from template" },
-        { "build",    "Build the project (NeonSignal/Cathode)" },
-        { "clean",    "Remove build artifacts" },
-        { "rm",       "Remove a created project" },
-        { "certs",    "Generate TLS certificates" },
-        { "doctor",   "Diagnose project health" },
-        { "glow",     "Check phosphor coating status" },
-        { "serve",    "Start dev server with dashboard" },
-        { "filament", "Manage filament packages" },
-        { "version",  "Show phosphor version" },
-        { "help",     "Show help for commands" },
+        { "create",   "Scaffold a new project from a template" },
+        { "glow",     "Scaffold a Cathode landing page from embedded template" },
+        { "build",    "Bundle and deploy a Cathode JSX project via esbuild" },
+        { "serve",    "Start neonsignal dev server with dashboard" },
+        { "clean",    "Remove build artifacts and stale staging directories" },
+        { "rm",       "Remove a specific path within the project" },
+        { "certs",    "Generate TLS certificates (local CA or Let's Encrypt)" },
+        { "doctor",   "Run project diagnostics" },
+        { "filament", "[experimental] reserved for future functionality" },
+        { "version",  "Print phosphor version" },
+        { "help",     "Show help for a command" },
     };
     int ncmds = (int)(sizeof(cmds) / sizeof(cmds[0]));
 
