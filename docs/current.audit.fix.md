@@ -1,172 +1,124 @@
-# Codex Audit Remediation Plan
+# Phosphor Deep Bugs Audit
 
-## Context
+Run time: 2026-04-08T17-06-51Z
+Mode: static source audit only
+Scope: `README.md`, `meson.build`, `meson.options`, `src/`, `include/`
+Tree state: audit reflects the current dirty working tree; I did not run builds or tests.
 
-Three independent static audits were run by OpenAI Codex on 2026-04-06. All produced overlapping findings. All findings have been verified as **still present** in the current code (commit 681daa0). The core risk: manifest-controlled paths can escape intended filesystem boundaries, and ACME certificate flows have correctness/injection issues.
+## Confirmed findings
 
-## Audit File Status
+### 1. High: `serve --project` still mishandles relative `certs-root`
 
-| File | Timestamp | Findings | Verdict |
-|------|-----------|----------|---------|
-| `.claude/2026-04-06_08-10-55_GMT.audit.md` | 08:10 GMT | 6 findings | Real, verified |
-| `.claude/2026-04-06T09-06-58Z.audit.md` | 09:06 UTC | 6 findings | Real, verified |
-| `.claude/2026-04-06T10-04-24Z.audit.md` | 10:04 UTC | 5 findings | Real, verified |
+- `ph_cmd_serve()` anchors `www_root`, working-dir, upload-dir, augments-dir, grafts-dir, log-directory, and redirect paths under `project_root_abs`, but it leaves `cfg.ns.certs_root` as the raw flag or manifest string:
+  - `src/commands/serve_cmd.c:338-349`
+  - `src/commands/serve_cmd.c:351-403`
+- The later containment gate calls `serve_validate_under_root("certs-root", cfg.ns.certs_root, project_root_abs)`:
+  - `src/commands/serve_cmd.c:469-500`
+- `serve_validate_under_root()` relies on `ph_path_is_under()`, and `ph_path_is_under()` resolves relative children against the caller's current working directory via `realpath(".")`, not against `project_root_abs`:
+  - `src/commands/serve_cmd.c:82-95`
+  - `src/io/path_norm.c:213-340`
 
-All are read-only static audits. Findings overlap ~85%. Combined, 8 distinct issues across 4 severity tiers.
+Impact:
 
----
+- `phosphor serve --project /path/to/site` can reject a valid relative certs directory from `[certs].output_dir` or `[serve.neonsignal].certs_root` when invoked outside the project root.
+- In the worst case, if the caller cwd happens to contain a matching relative path, the check is performed against the wrong tree entirely.
+- This contradicts the documented intent that serve reads cert defaults from the project manifest while using `--project` as the anchor:
+  - `README.md:111-120`
 
-## Phase 0: Save plan to docs
+### 2. High: the Let's Encrypt path pipeline is still not rooted to the project, and `--output` can escape it
 
-Save the final remediation plan as `docs/current.audit.fix.md` for project tracking, and to `docs/actual.plan.md` per CLAUDE.md convention.
+- The manifest parser now validates `output_dir`, `account_key`, `dir_name`, and `webroot` as relative, non-traversing paths:
+  - `src/certs/certs_config.c:55-79`
+  - `src/certs/certs_config.c:137-154`
+  - `src/certs/certs_config.c:236-263`
+- But `run_letsencrypt()` still uses `config->account_key` and `d->webroot` as raw strings, without anchoring them under `project_root`:
+  - `src/commands/certs_cmd.c:90-107`
+  - `src/commands/certs_cmd.c:285-288`
+- `ph_cmd_certs()` also overwrites `certs_cfg.output_dir` from `--output` without revalidating it:
+  - `src/commands/certs_cmd.c:502-509`
+- `run_letsencrypt()` then builds `domain_dir = ph_path_join(project_root, config->output_dir)` and writes to it without any `ph_path_is_under()` containment check:
+  - `src/commands/certs_cmd.c:121-130`
+  - `src/commands/certs_cmd.c:307-319`
 
----
+Impact:
 
-## Phase 1: Path Hardening Primitives (foundation -- must land first)
+- `phosphor certs --project /path/to/site --letsencrypt ...` will still read or create `account_key` and HTTP-01 challenge files relative to the caller cwd instead of the target project.
+- `--output=../../somewhere-else` or any other escaping relative path can push the LE private key and certificate output outside the project root, despite the README promising that all cert paths are project-root validated:
+  - `README.md:237-245`
+- The local CA and local leaf code already do a second `ph_path_is_under()` check; the LE path is the inconsistent gap.
 
-All path-escape fixes depend on these new utilities in `src/io/path_norm.c` + `include/phosphor/path.h`.
+### 3. Medium: `serve` still passes raw `[deploy].public_dir` to the default watcher
 
-### 1A. Add `ph_path_resolve()`
-- Wraps POSIX `realpath(3)` with `ph_alloc`/`ph_free` contract
-- Fully resolves `..`, `.`, and symlinks
-- Fallback for nonexistent tails: resolve longest existing prefix, reject traversal in remainder
+- `parse_deploy_config()` copies `[deploy].public_dir` without validation:
+  - `src/template/manifest_load.c:337-347`
+- `ph_cmd_serve()` stores that raw string in `cfg.ns.deploy_dir` for the watcher:
+  - `src/commands/serve_cmd.c:407-413`
+- `ph_serve_start()` appends it directly to the default watcher argv as `--deploy <deploy_dir>`:
+  - `src/serve/serve.c:394-410`
 
-### 1B. Add `ph_path_is_under()`
-- Predicate: "does `child` stay within `root` after full canonicalization?"
-- Calls `ph_path_resolve()` on both args, then prefix-checks resolved paths
-- Replaces naive `deploy_at_escapes_root()` string-prefix check
+Impact:
 
-### 1C. Add `ph_path_safe_join()`
-- Like `ph_path_join()` but rejects absolute `rel` and `..` traversal
-- Returns NULL + sets `ph_error_t` on violation
-- Used wherever untrusted input (manifest ops, deploy paths) feeds into joins
+- If `[serve.neonsignal].watch = true` and no explicit `watch_cmd` is provided, a manifest with `[deploy].public_dir = "../../outside"` still sends an escaping deploy path to the build-on-change helper.
+- The main `build` command has containment checks for `[deploy].public_dir`; the watcher path bypasses that hardening and can reintroduce out-of-tree writes through the default watch workflow.
 
-**Files:** `src/io/path_norm.c`, `include/phosphor/path.h`
+### 4. Medium: template `copy` and `render` writes still lack the final containment re-check added for `chmod` and `remove`
 
----
+- Plan build does an early `ph_path_is_under()` check when `to_abs` is first resolved:
+  - `src/template/planner.c:256-291`
+- During execution, `chmod` and `remove` re-check `plan->dest_dir` immediately before mutating the filesystem:
+  - `src/template/writer.c:789-850`
+- `copy` and `render` do not. They write directly to `op->to_abs` with `ph_fs_atomic_write()` or `ph_fs_write_file()`:
+  - `src/template/writer.c:636-668`
+  - `src/template/writer.c:713-780`
+- `ph_fs_write_file()` opens the target with plain `open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644)`, which follows symlinks:
+  - `src/platform/posix/fs_posix.c:81-104`
 
-## Phase 2: Path Traversal Fixes (HIGH -- Findings 1, 2)
+Impact:
 
-Depends on Phase 1.
+- A symlink swapped into the staging or destination tree after plan construction can redirect single-file `copy` or `render` writes outside `dest_dir`.
+- The codebase already recognized this TOCTOU class for `chmod` and `remove`; the missing symmetry on `copy` and `render` leaves the same class of escape available for file creation and overwrite.
 
-### 2A. Change build path flags from `PH_TYPE_STRING` to `PH_TYPE_PATH`
-- In `src/commands/phosphor_commands.c:65-68`, `--project` and `--deploy-at` are declared as `PH_TYPE_STRING`
-- The generic validator at `src/args-parser/validate.c:108-118` only runs path-traversal checks for `PH_TYPE_PATH`
-- Change both to `PH_TYPE_PATH` so the args-parser rejects `..` traversal at the validation layer
+### 5. Medium: `[build].entry` is still unconstrained and can point outside the project
 
-### 2B. Reject unsafe manifest ops at parse time
-- In `src/template/manifest_load.c:467-468`, after parsing `ops[i].from` / `ops[i].to`
-- Reject if `ph_path_is_absolute()` or `ph_path_has_traversal()` returns true
-- This is the parse-time gate -- catches malicious manifests early
+- `parse_build_config()` copies `[build].entry` without absolute-path or traversal validation:
+  - `src/template/manifest_load.c:285-296`
+- `ph_cmd_build()` passes that manifest value directly to esbuild:
+  - `src/commands/build_cmd.c:728-731`
 
-### 2C. Validate `template.source_root` at parse time
-- In `src/template/manifest_load.c:134-156`, `source_root` is loaded verbatim
-- Reject if absolute or contains traversal
-- This is the other parse-time gate for the template trust boundary
+Impact:
 
-### 2D. Validate resolved planner paths against roots
-- In `src/template/planner.c:156-170`, after joining `from_abs` / `to_abs`
-- Call `ph_path_is_under(from_abs, template_root)` and `ph_path_is_under(to_abs, dest_dir)`
-- Catches variable-substitution-injected traversal (e.g., `<<name>>` = `../../escape`)
-- Also covers `glow_cmd.c` which shares the same planner/writer pipeline
+- A project manifest can set `entry = "../other-project/src/app.tsx"` or an absolute path and cause `phosphor build` to bundle code from outside the declared project root.
+- The deploy target is tightly contained, but the input root is not, which is inconsistent with the rest of the build hardening and makes untrusted manifests a broader read surface than the README implies.
 
-### 2E. Fix build deploy path escape
-- In `src/commands/build_cmd.c:122-136`, replace `deploy_at_escapes_root()` with `ph_path_is_under()`
-- In `src/commands/build_cmd.c:470-482`, add same validation for manifest `[deploy].public_dir` (currently unchecked)
+## Documentation drift
 
-### 2F. Add containment check in writer.c remove operation
-- In `src/template/writer.c:603-614`, `PH_OP_REMOVE` calls `ph_fs_rmtree()` on resolved paths without containment
-- Add `ph_path_is_under()` check before any `ph_fs_rmtree()` call in the executor
+### 6. Low: public headers still describe feature flags and temp-dir behavior that no longer match Meson or the code
 
-**Files:** `src/commands/phosphor_commands.c`, `src/template/manifest_load.c`, `src/template/planner.c`, `src/commands/build_cmd.c`, `src/template/writer.c`
+- The public headers still claim optional dependency support is enabled with flags like `-Dlibgit2=true`, `-Dlibarchive=true`, and `-Dpcre2=true`:
+  - `include/phosphor/git_fetch.h:8-12`
+  - `include/phosphor/git_fetch.h:67-69`
+  - `include/phosphor/archive.h:8-12`
+  - `include/phosphor/archive.h:44-45`
+  - `include/phosphor/regex.h:8-12`
+  - `include/phosphor/regex.h:30-32`
+- The top-level Meson build now unconditionally wires in libgit2, libarchive, and PCRE2 and only exposes `script_fallback` and `dashboard` as user options:
+  - `meson.build:126-210`
+  - `meson.options:1-4`
+- The archive and git headers also still document predictable `/tmp/...<pid>-<timestamp>` temp directories, but the implementations now use `mkdtemp()`:
+  - `include/phosphor/archive.h:49-53`
+  - `include/phosphor/git_fetch.h:72-77`
+  - `src/io/archive.c:156-166`
+  - `src/io/git_fetch.c:203-213`
 
----
+Impact:
 
-## Phase 3: ACME Fixes (HIGH/LOW -- Findings 3, 4, 7)
+- This is documentation drift rather than a runtime bug, but it makes the public API and build surface look older and looser than the actual implementation.
 
-Independent of Phase 2. Can be developed in parallel.
+## Recommended fix order
 
-### 3A. Eliminate shell injection in JWK extraction
-- In `src/certs/acme_jws.c:258-284` and `:384-411`
-- Replace `sh -c "openssl ... '<key_path>' ..."` with direct `execvp` via argv
-- Reference: `ph_acme_jws_sign()` at lines 130-148 already does this correctly
-- Add static helper `exec_to_file(argv, stdout_path)` using fork/dup2/execvp if `ph_proc_exec` lacks stdout redirection
-- Also audit rest of `src/certs/acme_jws.c` for any remaining shell-based helpers
-
-### 3B. Fix challenge timeout returning success
-- In `src/certs/acme_challenge.c:232-289`
-- Add `bool validated = false;` before loop, set true on `"valid"` break
-- After loop: if `!validated`, return `PH_ERR` with timeout error (not `PH_OK`)
-- Include last observed status in error message for diagnosability
-- The unconditional `return PH_OK` at line 289 is the bug
-
-### 3C. Replace busy-wait with `nanosleep`
-- In `src/certs/acme_challenge.c:245-249` and `src/certs/acme_finalize.c:235-238`
-- Replace `while (ph_clock_elapsed_ms(...) < 2000.0) ;` with `nanosleep(&(struct timespec){2,0}, NULL)`
-
-**Files:** `src/certs/acme_jws.c`, `src/certs/acme_challenge.c`, `src/certs/acme_finalize.c`
-
----
-
-## Phase 4: Temp Dirs + Serve CWD (MEDIUM -- Findings 5, 6)
-
-Independent of other phases.
-
-### 4A. Replace predictable temp paths with `mkdtemp`
-Reference pattern already in codebase: `src/commands/glow_cmd.c:131-135`
-
-| File | Current pattern | Fix |
-|------|----------------|-----|
-| `src/io/archive.c:164-174` | `/tmp/.phosphor-extract-<pid>-<time>` + `ph_fs_mkdir_p()` | `mkdtemp()` |
-| `src/io/git_fetch.c:210-220` | `/tmp/.phosphor-clone-<pid>-<time>` + `ph_fs_mkdir_p()` | `mkdtemp()` |
-| `src/template/staging.c:46-68` | `<parent>/.phosphor-staging-<pid>-<time>` + `ph_fs_mkdir_p()` | `mkdtemp()` (heap-allocated template since parent varies) |
-
-### 4B. Default serve child cwd to project root
-- In `src/commands/serve_cmd.c`, after building cfg struct
-- If `cfg.ns.working_dir` is NULL, default to `project_root_abs`
-- Same for `cfg.redir.working_dir`
-- Only affects the default; explicit CLI/manifest `working_dir` still wins
-
-**Files:** `src/io/archive.c`, `src/io/git_fetch.c`, `src/template/staging.c`, `src/commands/serve_cmd.c`
-
----
-
-## Phase 5: Documentation Drift (LOW -- Finding 8)
-
-Independent of all other phases.
-
-### 5A. Fix README phantom Meson options
-- `README.md` documents `-Dlibgit2`, `-Dlibarchive`, `-Dpcre2`, `-Dlibcurl` toggles
-- `meson.options` only has `script_fallback` and `dashboard`
-- `meson.build:140-273` configures all four deps unconditionally
-- Update README to reflect reality: all deps are always built from vendored subprojects
-
-### 5B. Update project-audit.rst
-- Still references "531 tests", "5-job CI", version `0.0.1-021`
-- Current state: 0 active tests, 3 CI jobs (`build`, `release-build`, `release`)
-- Update to reflect current state
-
-**Files:** `README.md`, `docs/source/reference/project-audit.rst`
-
----
-
-## Implementation Order
-
-```
-Phase 0 (save plan to docs)
-Phase 1 (path primitives) --> Phase 2 (path fixes)
-                          \
-Phase 3 (ACME)             > can run in parallel
-Phase 4 (temp dirs + serve)/
-Phase 5 (docs)            /
-```
-
-## Verification
-
-1. **Build**: `meson setup build && ninja -C build` -- must compile clean
-2. **Smoke**: `./build/phosphor version` -- binary runs
-3. **Path hardening**: craft a malicious `template.phosphor.toml` with `ops[0].to = "../../escape"` and verify `phosphor create` rejects it
-4. **Args layer**: verify `--deploy-at=../../outside` is rejected by args-parser before reaching build_cmd
-5. **ACME timeout**: inspect code path -- after loop exhaustion, `PH_ERR` is returned (not `PH_OK`)
-6. **Temp dirs**: verify `mkdtemp` pattern in archive/git_fetch/staging via code inspection
-7. **Docs**: verify README no longer documents nonexistent Meson options
+1. Anchor and revalidate `serve` certs paths against `project_root_abs`, especially `certs_root`.
+2. Root LE `account_key` and `webroot` under the project, and revalidate the `--output` override before use.
+3. Apply the same containment gate to the watcher deploy path that `build` already uses.
+4. Add an execution-time `ph_path_is_under()` re-check for file `copy` and `render` operations.
+5. Validate `[build].entry` the same way path-like manifest fields are validated elsewhere.
+6. Refresh the public header comments so they match the current Meson feature model and temp-dir implementation.

@@ -1,280 +1,165 @@
-# Phosphor 2026-04-08T11-07-17Z Bugs Audit Remediation Plan
+# Plan ▸ audit fix 2026-04-08T17-06-51Z.bugs
 
 ## Context
 
-A new codex audit landed at
-`.claude/codex-audit-fix/2026-04-08T11-07-17Z.bugs.audit.md`. This is
-a static source audit that reports 5 concrete defects (2 HIGH, 3
-MEDIUM) plus README drift. All findings were re-verified against the
-tree during Phase 1 exploration. No bug is a false positive.
+Codex produced a static-source audit
+(`.claude/codex-audit-fix/2026-04-08T17-06-51Z.bugs.audit.[ACTIVE ▸].md`) that
+lists 5 confirmed hardening gaps and 1 documentation-drift item in the current
+dirty working tree. Every finding concerns a path that can escape the declared
+project root, or public-header comments that no longer reflect the build and
+runtime.
 
-The goal is to fix the correctness issues in `src/` and resolve the
-README drift in a single remediation pass without changing any
-public API contracts or introducing new Meson options.
+Intended outcome: every path-bearing manifest / CLI field that feeds `serve`,
+`build`, `certs`, and the template executor is anchored to and
+containment-checked against the resolved project root; the public headers
+match how Meson actually wires libgit2 / libarchive / PCRE2 and how `archive`
+and `git_fetch` allocate their temp directories.
 
----
+## Findings and fixes
 
-## Verified Findings
+### Finding 1 (High) ▸ `serve --project` mishandles relative `certs-root`
 
-### 1. HIGH -- ACME and local leaf pipelines drop `domain.name`
+**Problem**
+`src/commands/serve_cmd.c:338-349` sets `cfg.ns.certs_root` directly from the
+`--certs-root` flag, `[serve.neonsignal].certs_root`, or
+`[certs].output_dir` without calling `anchor_serve_path`. The containment gate
+at `src/commands/serve_cmd.c:469-502` then calls
+`serve_validate_under_root("certs-root", …, project_root_abs)`, which delegates
+to `ph_path_is_under` → `ph_path_resolve` → `realpath(".")` — i.e. the caller
+cwd, not `project_root_abs`.
 
-**Sites:**
-- `src/commands/certs_cmd.c:222-227` (`ph_acme_order_create` call
-  passes only `d->san` / `d->san_count`).
-- `src/commands/certs_cmd.c:283-287` (`ph_acme_finalize` call, same
-  bug).
-- `src/certs/certs_leaf.c:141-147` (SAN cnf only written when
-  `san_count > 0`).
-- `src/certs/certs_leaf.c:168` (`-config` is `/dev/null` when
-  `san_count == 0`).
-- `src/certs/certs_leaf.c:206-211` (`-extfile` / `-extensions v3_req`
-  gated on `san_count > 0`).
-
-**Downstream reject points:**
-- `src/certs/acme_order.c:24-29` -- returns `PH_ERR_INTERNAL` on
-  `domain_count == 0`.
-- `src/certs/acme_finalize.c:32-39` -- returns `PH_ERR_INTERNAL` on
-  `domain_count == 0`.
-- `src/certs/acme_finalize.c:81-86` -- calls `ph_cert_san_write_cnf`
-  with the same domains array.
-- `src/certs/certs_san.c:34-43` -- `ph_cert_san_write_cnf` rejects
-  `san_count == 0` with `PH_ERR_INTERNAL`.
-- `src/certs/acme_finalize.c:90` and `src/certs/certs_leaf.c:154` --
-  both set CSR subject to `/CN=<domains[0]>` or `/CN=<d->name>`, so
-  `domains[0]` must be the primary.
-
-**Consequence:**
-- Manifests like `[[certs.domains]] name = "example.com"` (no `san`)
-  fail in Let's Encrypt because `domain_count == 0`.
-- Manifests with `san` but without `name` in the san list generate
-  leaf certs whose SANs do not include the primary name.
-- Without SAN entries, modern TLS clients reject the leaf cert.
-
-### 2. HIGH -- `phosphor certs --generate --domain=X` ignores the filter
-
-**Site:** `src/commands/certs_cmd.c:484-492` -- hard-codes `NULL`
-for the domain filter in both `run_local` and `run_letsencrypt`
-dispatch calls despite reading `domain_filter` at line 420.
-
-**Consequence:**
-- Every configured domain is processed.
-- LE rate-limit risk on accidental bulk renewals.
-- Local leaf certs overwritten even when the user explicitly scoped
-  the action to one domain.
-
-**Edge case:** `run_local` already errors out with `"no local domain
-matching"` if `domain_filter && generated == 0`. A filter that
-matches an LE-only domain would otherwise trip that error during the
-`--generate` dispatch. The fix must detect the target domain's mode
-upfront and skip the non-matching pipeline.
-
-### 3. MEDIUM -- serve preflight rejects bare PATH binary names
-
-**Sites:**
-- `src/serve/serve.c:71-87` (`ns.bin_path` branch) and
-  `src/serve/serve.c:89-107` (`redir.bin_path` branch) use `access()`
-  whenever `bin_path != NULL`.
-- `src/commands/serve_cmd.c:62-69` (`anchor_serve_path`) and
-  `src/commands/serve_cmd.c:250-254` / `385-390`
-  (`cfg.ns.bin_path = derived.ns_bin ? derived.ns_bin : raw`) both
-  intentionally leave bare names unanchored so PATH lookup can run
-  later.
-
-**Consequence:** `--neonsignal-bin=neonsignal` and manifest values
-like `bin = "neonsignal"` fail preflight because `access("neonsignal",
-X_OK)` looks in the current working directory, not PATH. The inline
-comment at `serve_cmd.c:246-249` and README `lines 89-90` both claim
-PATH-based preflight, which is currently wrong for any configured
-bare name.
-
-### 4. MEDIUM -- serve log-dir bootstrap non-recursive, silent on failure
-
-**Site:** `src/commands/serve_cmd.c:481-489` -- three raw `mkdir()`
-calls whose return values are discarded. The top-level
-`cfg.ns.log_directory` (already anchored at
-`serve_cmd.c:361-370`) may be nested (e.g. `var/log/phosphor`), so
-the parent component may not exist when step 7b runs.
-
-**Consequence:** Nested `log_directory` values silently fail to
-create. Downstream, neonsignal launches with `--enable-file-log`
-configured but without the log tree that was supposed to exist.
-Permission / `ENAMETOOLONG` / `ENOSPC` failures are equally
-invisible.
-
-### 5. MEDIUM -- `filament` returns success while printing "not yet implemented"
-
-**Site:** `src/commands/filament_cmd.c:8-23`. Handler prints
-`"filament: not yet implemented"` and then returns `0`.
-
-**Consequence:** Scripts, CI, and users cannot distinguish the
-placeholder from a successful command. A non-zero exit is the only
-honest signal.
-
-### 6. README drift
-
-- `README.md:173-178` -- LE examples missing `--letsencrypt`.
-- `README.md:183` -- documents `--output-dir=<path>`; real flag is `--output`.
-- `README.md:17-29` -- command list omits `filament`.
-- `README.md:68-71` -- implies ncurses is unconditional; it is
-  system-first with wrap fallback.
-- `README.md:89-90` -- PATH preflight claim depends on Fix 3.
+**Fix**
+1. Add `char *certs_root;` to `struct serve_derived_paths` and free it in
+   `serve_derived_paths_free`.
+2. Replace the raw assignments at `src/commands/serve_cmd.c:338-349` with
+   the `anchor_serve_path(raw, project_root_abs, false)` pattern used by
+   every other serve path field.
+3. No change needed to the containment call; it will now see a
+   project-anchored absolute path.
 
 ---
 
-## Recommended Fixes
+### Finding 2 (High) ▸ LE path pipeline not rooted to project, `--output` escapes
 
-### Fix 1 -- Effective-SAN helper + application (Finding 1)
+**Problem**
+- `src/commands/certs_cmd.c:473-479` leaves `project_root` as the raw
+  `--project` value (no normalization to absolute).
+- `src/commands/certs_cmd.c:502-509` overwrites `certs_cfg.output_dir` from
+  `--output` with no revalidation.
+- `run_letsencrypt` uses `config->account_key`, `d->webroot`, and
+  `domain_dir` without anchoring to or containment-checking against
+  `project_root`.
 
-Add a public helper in `include/phosphor/certs.h` and implement
-it in `src/certs/certs_san.c`:
-
-```c
-ph_result_t ph_cert_domain_effective_sans(
-    const ph_cert_domain_t *domain,
-    char ***out_list,
-    size_t *out_count,
-    ph_error_t **err);
-
-void ph_cert_domain_sans_free(char **list, size_t count);
-```
-
-The helper allocates a heap list with `domain->name` at index 0
-followed by each unique entry from `domain->san` that does not
-string-equal `domain->name`. List is guaranteed non-empty.
-
-Apply in `src/commands/certs_cmd.c run_letsencrypt`: build the
-effective list once per iteration, pass it to both
-`ph_acme_order_create` and `ph_acme_finalize`, free at every
-loop-exit path.
-
-Apply in `src/certs/certs_leaf.c`: drop the `san_count > 0` gates
-at lines 141, 168, and 206-211. Build the effective list
-unconditionally via the helper. Always pass `cnf_path` to openssl
-req and always append `-extfile/-extensions v3_req` to openssl
-x509.
-
-No change to `ph_acme_order_create`, `ph_acme_finalize`, or
-`ph_cert_san_write_cnf` themselves -- they remain strict about
-`count > 0`; the fix is upstream.
-
-### Fix 2 -- Honor `--generate --domain=X` (Finding 2)
-
-Rewrite `src/commands/certs_cmd.c:484-492` to pre-resolve the
-target domain's mode and dispatch only the matching pipeline:
-
-```c
-if (f_generate) {
-    bool do_local = true;
-    bool do_letsencrypt = true;
-
-    if (domain_filter) {
-        const ph_cert_domain_t *found = NULL;
-        for (size_t i = 0; i < certs_cfg.domain_count; i++) {
-            if (strcmp(certs_cfg.domains[i].name, domain_filter) == 0) {
-                found = &certs_cfg.domains[i];
-                break;
-            }
-        }
-        if (!found) {
-            ph_log_error("certs: no domain matching '%s' in manifest",
-                         domain_filter);
-            ph_certs_config_destroy(&certs_cfg);
-            return PH_ERR_CONFIG;
-        }
-        do_local       = (found->mode == PH_CERT_LOCAL);
-        do_letsencrypt = (found->mode == PH_CERT_LETSENCRYPT);
-    }
-
-    if (do_local) {
-        exit_code = run_local(&certs_cfg, project_root, false,
-                               domain_filter, f_dry_run, f_force);
-    }
-    if (exit_code == 0 && !ph_signal_interrupted() && do_letsencrypt) {
-        exit_code = run_letsencrypt(&certs_cfg, project_root,
-                                     domain_filter, "request",
-                                     directory_url, f_dry_run, f_force);
-    }
-}
-```
-
-### Fix 3 -- Bare-name PATH preflight (Finding 3)
-
-Add `static bool is_bare_name(const char *s)` to
-`src/serve/serve.c`. Rewrite `ph_serve_check_binaries` to check
-bareness before falling to `access()`, routing bare names to
-`find_in_path`. Apply the pattern to both `ns.bin_path` and
-`redir.bin_path` branches.
-
-### Fix 4 -- Checked recursive log-dir bootstrap (Finding 4)
-
-Replace the three raw `mkdir()` calls at
-`src/commands/serve_cmd.c:481-489` with `ph_fs_mkdir_p` from
-`include/phosphor/platform.h:44`. Treat each failure as
-`PH_ERR_FS` with a clear error message and full cleanup.
-
-### Fix 5 -- `filament` exits non-zero (Finding 5)
-
-Replace `return 0;` with `return PH_ERR_GENERAL;` at
-`src/commands/filament_cmd.c:22`. Keep the `printf` lines.
-
-### Fix 6 -- README drift
-
-Surgical edits to `README.md`:
-
-1. Lines 173-178: rewrite LE examples to include `--letsencrypt`.
-2. Line 183: rename `--output-dir` to `--output`.
-3. Lines 17-29: add `filament` entry as `[experimental]`.
-4. Lines 68-71: carve out ncurses from the "built unconditionally"
-   claim.
+**Fix**
+1. At the top of `ph_cmd_certs`, replace the raw `project_root` assignment
+   with the same `project_root_abs` resolver used by `ph_cmd_build`
+   (`src/commands/build_cmd.c:312-342`). Thread `project_root_abs` through
+   `run_local`, `run_letsencrypt`, and every TOML-path join.
+2. After the `--output` override, reject absolute / traversal values inline
+   with `ph_path_is_absolute` and `ph_path_has_traversal`.
+3. In `run_letsencrypt`, before using `config->account_key`: if non-NULL and
+   not absolute, `ph_path_join(project_root_abs, key)` and containment-check.
+   Reject absolute values.
+4. Containment-check `domain_dir` via `ph_path_is_under(domain_dir,
+   project_root_abs)` immediately after construction.
+5. For each LE domain iteration, anchor `d->webroot` under `project_root_abs`
+   into a local `webroot_abs`, containment-check, and pass that to
+   `ph_acme_challenge_respond`. Free on every loop exit.
+6. Update the dry-run `webroot:` log line to print `webroot_abs`.
 
 ---
 
-## Critical files to modify
+### Finding 3 (Medium) ▸ watcher receives raw `[deploy].public_dir`
 
-| File | Findings | Notes |
-|------|----------|-------|
-| `include/phosphor/certs.h` | 1 | add helper + free prototype |
-| `src/certs/certs_san.c` | 1 | implement helper + free |
-| `src/commands/certs_cmd.c` | 1, 2 | apply helper, rewrite `--generate` dispatch |
-| `src/certs/certs_leaf.c` | 1 | remove `san_count > 0` gates, use helper |
-| `src/serve/serve.c` | 3 | `is_bare_name` helper + preflight rewrite |
-| `src/commands/serve_cmd.c` | 4 | swap `mkdir` for `ph_fs_mkdir_p`, fail-closed |
-| `src/commands/filament_cmd.c` | 5 | return `PH_ERR_GENERAL` |
-| `README.md` | 6 | certs examples, `--output`, `filament`, ncurses note |
+**Problem**
+`parse_deploy_config` copies `[deploy].public_dir` without validation. The
+serve watcher argv appends it directly.
 
-## Implementation order
+**Fix**
+In `parse_deploy_config`, after copying `out->public_dir`, reject absolute
+or traversal values with a `PH_ERR_CONFIG` error. All call sites inherit
+the tightened invariant.
 
-```
-Fix 1 infra           -> add helper + free in certs_san.c / certs.h
-Fix 1 application #1  -> certs_cmd.c run_letsencrypt (order + finalize)
-Fix 1 application #2  -> certs_leaf.c (cnf + req + x509)
-Fix 2                 -> certs_cmd.c --generate dispatch
-Fix 3                 -> serve.c ph_serve_check_binaries
-Fix 4                 -> serve_cmd.c step 7b
-Fix 5                 -> filament_cmd.c return
-Fix 6                 -> README.md
-```
+---
 
-## Commit granularity
+### Finding 4 (Medium) ▸ copy/render writes lack execute-time containment
 
-1. `fix(certs): always include primary domain name in CSR and ACME order`
-2. `fix(certs): honor --domain filter in --generate dispatch`
-3. `fix(serve): resolve bare binary names via PATH in preflight`
-4. `fix(serve): use recursive mkdir_p for log directory bootstrap`
-5. `fix(filament): return non-zero when command is not implemented`
-6. `docs(readme): update certs examples, output flag, filament, ncurses`
+**Problem**
+`ph_plan_execute` re-checks `plan->dest_dir` containment for `PH_OP_CHMOD`
+and `PH_OP_REMOVE` but not for the single-file branches of `PH_OP_COPY` and
+`PH_OP_RENDER`.
 
-## Verification
+**Fix**
+Add the same `ph_path_is_under(op->to_abs, plan->dest_dir)` gate
+immediately before each single-file write, mirroring the chmod/remove
+pattern and using the same `goto cleanup_err` path.
 
-Static (safe, no build): grep-based checks on each fix site.
-Dynamic (requires build; ask user first): meson build, version
-smoke, `filament --path .` exit code, `certs --generate
---domain=nonexistent` error, cert dry-run SAN listing, serve
-bare-name preflight, serve log-dir bootstrap.
+---
 
-## Out of scope
+### Finding 5 (Medium) ▸ `[build].entry` unconstrained
 
-- Changing the `ph_acme_*` or `ph_cert_san_write_cnf` signatures.
-- Meson graph changes for optional deps.
-- Hiding `filament` from help.
-- README rewording beyond the five drift items.
+**Problem**
+`parse_build_config` copies `[build].entry` without validation.
+
+**Fix**
+Right after `out->entry = toml_get_string(b, "entry");`, reject absolute
+and traversal values with `PH_ERR_CONFIG`.
+
+---
+
+### Finding 6 (Low) ▸ public header doc drift
+
+**Problem**
+`include/phosphor/git_fetch.h`, `include/phosphor/archive.h`, and
+`include/phosphor/regex.h` still describe `-Dlibgit2=true`,
+`-Dlibarchive=true`, `-Dpcre2=true`, and predictable
+`/tmp/...-<pid>-<timestamp>` temp directories. Meson unconditionally wires
+all three, and both archive / git_fetch use `mkdtemp`.
+
+**Fix**
+Documentation-only. Drop the `-D...` flag text, note the deps are
+unconditionally linked, and replace the predictable temp-dir examples with
+`mkdtemp`-based ones. No runtime change.
+
+---
+
+## Commit breakdown
+
+1. `fix(serve): anchor certs_root under project root before containment`
+2. `fix(certs): root LE account_key and webroot under project`
+3. `fix(manifest): reject non-relative [deploy].public_dir at parse`
+4. `fix(template): re-check copy/render containment before writing`
+5. `fix(manifest): reject non-relative [build].entry at parse`
+6. `docs(include): sync header comments with meson and mkdtemp`
+
+GPG-signed, no `Co-Authored-By`, no staging of `.claude/`, `CLAUDE.md`,
+`GEMINI.md`, `AGENTS.md`.
+
+---
+
+## Critical files
+
+### Modified
+- `src/commands/serve_cmd.c` ▸ finding 1
+- `src/commands/certs_cmd.c` ▸ finding 2
+- `src/template/manifest_load.c` ▸ findings 3 and 5
+- `src/template/writer.c` ▸ finding 4
+- `include/phosphor/git_fetch.h` ▸ finding 6
+- `include/phosphor/archive.h` ▸ finding 6
+- `include/phosphor/regex.h` ▸ finding 6
+
+### Renamed (at completion)
+- `.claude/codex-audit-fix/2026-04-08T17-06-51Z.bugs.audit.[ACTIVE ▸].md`
+  → `…[COMPLETED ✓].md` via `git mv`.
+
+---
+
+## Verification (run only on request per build-workflow skill)
+
+1. `meson setup build --reconfigure && ninja -C build`
+2. `./build/phosphor version` and `./build/phosphor --help`
+3. Manual path-escape probes on a scratch project (per plan verification
+   section).
+4. Grep `include/` for `-Dlibgit2=true`, `-Dlibarchive=true`, `-Dpcre2=true`,
+   `/tmp/.phosphor-clone-`, `/tmp/.phosphor-extract-` — must no longer show
+   opt-in flag text or pid/timestamp temp-dir examples.
