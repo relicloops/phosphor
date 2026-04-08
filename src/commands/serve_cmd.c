@@ -68,6 +68,39 @@ static char *anchor_serve_path(const char *raw,
     return ph_path_join(project_root_abs, raw);
 }
 
+/*
+ * serve_validate_under_root -- audit fix (2026-04-08T14-06-47Z).
+ *
+ * Reject resolved serve paths that escape project_root_abs. Called
+ * after anchor_serve_path has run so either:
+ *   - the raw value was absolute and cfg.<field> points at the raw
+ *     (no anchoring happened), or
+ *   - the raw value was relative and cfg.<field> points at a derived
+ *     path joined under project_root_abs.
+ *
+ * In both cases the final path must canonicalize to a location under
+ * project_root_abs. bin_path fields are excluded from this check at
+ * the call site -- bare names resolve via PATH downstream.
+ *
+ * Returns 0 on success (or if path is NULL, which means "not set");
+ * returns PH_ERR_VALIDATE on failure and logs the offending field.
+ * Callers are responsible for the cfg cleanup cascade.
+ */
+static int serve_validate_under_root(const char *label,
+                                      const char *path,
+                                      const char *project_root_abs) {
+    if (!path) return 0;
+    if (ph_path_has_traversal(path)) {
+        ph_log_error("serve: %s contains path traversal: %s", label, path);
+        return PH_ERR_VALIDATE;
+    }
+    if (!ph_path_is_under(path, project_root_abs)) {
+        ph_log_error("serve: %s escapes project root: %s", label, path);
+        return PH_ERR_VALIDATE;
+    }
+    return 0;
+}
+
 /* Heap-allocated derived path pointers for the serve config. Each field is
  * either NULL (no allocation -- the cfg uses the raw flag/manifest value)
  * or owned by this struct and freed via serve_derived_paths_free.
@@ -432,6 +465,41 @@ int ph_cmd_serve(const ph_cli_config_t *config,
     /* if redirect target port not set, default to neonsignal port */
     if (cfg.redir.target_port == 0 && cfg.ns.port > 0)
         cfg.redir.target_port = cfg.ns.port;
+
+    /* step 5b: containment enforcement. Every serve path that feeds a
+     * child's cwd/serve-root/write-root must stay under project_root_abs
+     * so a buggy or malicious manifest cannot redirect writes, chdirs,
+     * or served content outside the project tree. bin_path fields are
+     * intentionally excluded -- bare names are PATH-resolved downstream
+     * and absolute paths to binaries are allowed by design. */
+    {
+        int vrc = 0;
+        vrc |= serve_validate_under_root("www-root",
+                cfg.ns.www_root, project_root_abs);
+        vrc |= serve_validate_under_root("certs-root",
+                cfg.ns.certs_root, project_root_abs);
+        vrc |= serve_validate_under_root("working-dir",
+                cfg.ns.working_dir, project_root_abs);
+        vrc |= serve_validate_under_root("upload-dir",
+                cfg.ns.upload_dir, project_root_abs);
+        vrc |= serve_validate_under_root("augments-dir",
+                cfg.ns.augments_dir, project_root_abs);
+        vrc |= serve_validate_under_root("grafts-dir",
+                cfg.ns.grafts_dir, project_root_abs);
+        vrc |= serve_validate_under_root("log-directory",
+                cfg.ns.log_directory, project_root_abs);
+        vrc |= serve_validate_under_root("redirect-acme-webroot",
+                cfg.redir.acme_webroot, project_root_abs);
+        vrc |= serve_validate_under_root("redirect-working-dir",
+                cfg.redir.working_dir, project_root_abs);
+        if (vrc != 0) {
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_VALIDATE;
+        }
+    }
 
     /* audit fix: default child working_dir to the resolved project root.
      * previously, when no flag or manifest setting was given, children
