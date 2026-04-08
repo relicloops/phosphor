@@ -109,6 +109,7 @@ static int serve_validate_under_root(const char *label,
  * grow with every new anchored field. */
 struct serve_derived_paths {
     char *www_root;
+    char *certs_root;
     char *redir_acme_webroot;
     char *ns_bin;
     char *ns_working_dir;
@@ -123,6 +124,7 @@ struct serve_derived_paths {
 static void serve_derived_paths_free(struct serve_derived_paths *p) {
     if (!p) return;
     ph_free(p->www_root);
+    ph_free(p->certs_root);
     ph_free(p->redir_acme_webroot);
     ph_free(p->ns_bin);
     ph_free(p->ns_working_dir);
@@ -335,17 +337,25 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         ph_log_debug("serve: www-root from [deploy]: %s", cfg.ns.www_root);
     }
 
-    /* certs-root: flag > [serve] > certs.output_dir */
-    if (certs_root_flag) {
-        cfg.ns.certs_root = certs_root_flag;
-    } else if (ms && ms->ns_certs_root) {
-        cfg.ns.certs_root = ms->ns_certs_root;
-        ph_log_debug("serve: certs-root from [serve]: %s",
-                      cfg.ns.certs_root);
-    } else if (has_certs && certs_cfg.output_dir) {
-        cfg.ns.certs_root = certs_cfg.output_dir;
-        ph_log_debug("serve: certs-root from [certs]: %s",
-                      cfg.ns.certs_root);
+    /* certs-root: flag > [serve] > certs.output_dir.
+     * audit fix (2026-04-08T17-06-51Z, finding 1): anchor relative values
+     * under project_root_abs so the containment gate below canonicalizes
+     * against the intended project tree rather than the caller cwd.
+     * Every other serve path field already goes through anchor_serve_path;
+     * certs-root was the last gap. */
+    {
+        const char *raw = certs_root_flag
+                          ? certs_root_flag
+                          : (ms && ms->ns_certs_root
+                             ? ms->ns_certs_root
+                             : (has_certs ? certs_cfg.output_dir : NULL));
+        derived.certs_root = anchor_serve_path(raw, project_root_abs, false);
+        cfg.ns.certs_root = derived.certs_root ? derived.certs_root : raw;
+        if (cfg.ns.certs_root && !certs_root_flag) {
+            ph_log_debug("serve: certs-root from %s: %s",
+                          (ms && ms->ns_certs_root) ? "[serve]" : "[certs]",
+                          cfg.ns.certs_root);
+        }
     }
 
     /* audit fix (2026-04-07T20-37-55Z): anchor working/upload/augments/
