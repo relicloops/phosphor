@@ -43,6 +43,65 @@ static void warn_privileged_port(const char *label, int port) {
                      "-- may require root", label, port);
 }
 
+/*
+ * anchor_serve_path -- audit fix (2026-04-07T20-37-55Z).
+ *
+ * Anchor a relative serve config path under project_root_abs so the value
+ * is stable regardless of phosphor's caller-cwd.
+ *
+ * Returns:
+ *   NULL  -- raw is NULL, already absolute, or (when bare_ok) is a bare
+ *            command name with no '/' (PATH lookup). The caller should
+ *            pass `raw` through unchanged.
+ *   heap  -- a newly allocated joined path. The caller MUST track it and
+ *            free it after the cfg is no longer in use.
+ *
+ * `bare_ok` is for bin_path-style fields where a name without '/' must be
+ * left alone so the OS PATH lookup keeps working.
+ */
+static char *anchor_serve_path(const char *raw,
+                                const char *project_root_abs,
+                                bool bare_ok) {
+    if (!raw) return NULL;
+    if (ph_path_is_absolute(raw)) return NULL;
+    if (bare_ok && strchr(raw, '/') == NULL) return NULL;
+    return ph_path_join(project_root_abs, raw);
+}
+
+/* Heap-allocated derived path pointers for the serve config. Each field is
+ * either NULL (no allocation -- the cfg uses the raw flag/manifest value)
+ * or owned by this struct and freed via serve_derived_paths_free.
+ *
+ * Centralizing these here removes the per-cleanup-site ph_free chains that
+ * grow with every new anchored field. */
+struct serve_derived_paths {
+    char *www_root;
+    char *redir_acme_webroot;
+    char *ns_bin;
+    char *ns_working_dir;
+    char *ns_log_directory;
+    char *ns_upload_dir;
+    char *ns_augments_dir;
+    char *ns_grafts_dir;
+    char *redir_bin;
+    char *redir_working_dir;
+};
+
+static void serve_derived_paths_free(struct serve_derived_paths *p) {
+    if (!p) return;
+    ph_free(p->www_root);
+    ph_free(p->redir_acme_webroot);
+    ph_free(p->ns_bin);
+    ph_free(p->ns_working_dir);
+    ph_free(p->ns_log_directory);
+    ph_free(p->ns_upload_dir);
+    ph_free(p->ns_augments_dir);
+    ph_free(p->ns_grafts_dir);
+    ph_free(p->redir_bin);
+    ph_free(p->redir_working_dir);
+    memset(p, 0, sizeof(*p));
+}
+
 int ph_cmd_serve(const ph_cli_config_t *config,
                  const ph_parsed_args_t *args) {
     (void)config;
@@ -176,9 +235,23 @@ int ph_cmd_serve(const ph_cli_config_t *config,
     cfg.skip_redirect = no_redirect || (ms && ms->no_redirect);
     cfg.verbose = verbose;
 
-    /* neonsignal config -- tier 1 (flag) > tier 2 (manifest [serve]) */
-    cfg.ns.bin_path = ns_bin ? ns_bin
-                    : (ms ? ms->ns_bin : NULL);
+    /* audit fix (2026-04-07T20-37-55Z): centralize all heap-allocated
+     * derived path pointers in one struct. previously each anchored field
+     * grew its own ph_free at every cleanup site, which was unsustainable
+     * once we needed to anchor 8+ fields. */
+    struct serve_derived_paths derived;
+    memset(&derived, 0, sizeof(derived));
+
+    /* neonsignal config -- tier 1 (flag) > tier 2 (manifest [serve]).
+     * audit fix: anchor relative bin_path under project_root_abs so the
+     * preflight access() check (run before any chdir) finds the right file
+     * when phosphor is invoked from outside the project. bare names with
+     * no '/' stay unanchored so PATH lookup keeps working. */
+    {
+        const char *raw = ns_bin ? ns_bin : (ms ? ms->ns_bin : NULL);
+        derived.ns_bin = anchor_serve_path(raw, project_root_abs, true);
+        cfg.ns.bin_path = derived.ns_bin ? derived.ns_bin : raw;
+    }
 
     {
         int t1 = flag_int(args, "threads");
@@ -197,17 +270,35 @@ int ph_cmd_serve(const ph_cli_config_t *config,
                     : (ms ? ms->ns_port : 0);
     }
 
-    /* www-root: flag > [serve] > dirname(deploy.public_dir) */
-    char *www_root_derived = NULL;
+    /* www-root: flag > [serve] > dirname(deploy.public_dir).
+     * audit fix: when the value is manifest-relative we must anchor it under
+     * project_root_abs, otherwise `phosphor serve --project /elsewhere` from
+     * an unrelated cwd resolves www_root against the wrong directory. */
     if (www_root_flag) {
-        cfg.ns.www_root = www_root_flag;
+        if (ph_path_is_absolute(www_root_flag)) {
+            cfg.ns.www_root = www_root_flag;
+        } else {
+            derived.www_root = ph_path_join(project_root_abs, www_root_flag);
+            cfg.ns.www_root = derived.www_root;
+        }
     } else if (ms && ms->ns_www_root) {
-        cfg.ns.www_root = ms->ns_www_root;
+        if (ph_path_is_absolute(ms->ns_www_root)) {
+            cfg.ns.www_root = ms->ns_www_root;
+        } else {
+            derived.www_root = ph_path_join(project_root_abs, ms->ns_www_root);
+            cfg.ns.www_root = derived.www_root;
+        }
         ph_log_debug("serve: www-root from [serve]: %s", cfg.ns.www_root);
     } else if (has_manifest && manifest.deploy.present &&
                manifest.deploy.public_dir) {
-        www_root_derived = ph_path_dirname(manifest.deploy.public_dir);
-        cfg.ns.www_root = www_root_derived;
+        char *parent = ph_path_dirname(manifest.deploy.public_dir);
+        if (parent && !ph_path_is_absolute(parent)) {
+            derived.www_root = ph_path_join(project_root_abs, parent);
+            ph_free(parent);
+        } else {
+            derived.www_root = parent;
+        }
+        cfg.ns.www_root = derived.www_root;
         ph_log_debug("serve: www-root from [deploy]: %s", cfg.ns.www_root);
     }
 
@@ -224,21 +315,38 @@ int ph_cmd_serve(const ph_cli_config_t *config,
                       cfg.ns.certs_root);
     }
 
+    /* audit fix (2026-04-07T20-37-55Z): anchor working/upload/augments/
+     * grafts directories under project_root_abs when relative. all of
+     * these end up either in chdir() of a child process or in mkdir()
+     * called by phosphor itself before any chdir, so caller-cwd dependent
+     * resolution is wrong. */
     {
         const char *f = ph_args_get_flag(args, "working-dir");
-        cfg.ns.working_dir = f ? f : (ms ? ms->ns_working_dir : NULL);
+        const char *raw = f ? f : (ms ? ms->ns_working_dir : NULL);
+        derived.ns_working_dir = anchor_serve_path(raw, project_root_abs, false);
+        cfg.ns.working_dir = derived.ns_working_dir
+                           ? derived.ns_working_dir : raw;
     }
     {
         const char *f = ph_args_get_flag(args, "upload-dir");
-        cfg.ns.upload_dir = f ? f : (ms ? ms->ns_upload_dir : NULL);
+        const char *raw = f ? f : (ms ? ms->ns_upload_dir : NULL);
+        derived.ns_upload_dir = anchor_serve_path(raw, project_root_abs, false);
+        cfg.ns.upload_dir = derived.ns_upload_dir
+                          ? derived.ns_upload_dir : raw;
     }
     {
         const char *f = ph_args_get_flag(args, "augments-dir");
-        cfg.ns.augments_dir = f ? f : (ms ? ms->ns_augments_dir : NULL);
+        const char *raw = f ? f : (ms ? ms->ns_augments_dir : NULL);
+        derived.ns_augments_dir = anchor_serve_path(raw, project_root_abs, false);
+        cfg.ns.augments_dir = derived.ns_augments_dir
+                            ? derived.ns_augments_dir : raw;
     }
     {
         const char *f = ph_args_get_flag(args, "grafts-dir");
-        cfg.ns.grafts_dir = f ? f : (ms ? ms->ns_grafts_dir : NULL);
+        const char *raw = f ? f : (ms ? ms->ns_grafts_dir : NULL);
+        derived.ns_grafts_dir = anchor_serve_path(raw, project_root_abs, false);
+        cfg.ns.grafts_dir = derived.ns_grafts_dir
+                          ? derived.ns_grafts_dir : raw;
     }
 
     /* neonsignal logging flags -- tier 1 (flag) > tier 2 (manifest) */
@@ -250,9 +358,15 @@ int ph_cmd_serve(const ph_cli_config_t *config,
                             || (ms && ms->ns_enable_log_color);
     cfg.ns.enable_file_log = ph_args_has_flag(args, "enable-file-log")
                            || (ms && ms->ns_enable_file_log);
+    /* audit fix: log_directory is mkdir'd directly by phosphor BEFORE any
+     * child chdir, so a relative value resolved against the caller cwd
+     * creates the log dir in the wrong place. */
     {
         const char *f = ph_args_get_flag(args, "log-directory");
-        cfg.ns.log_directory = f ? f : (ms ? ms->ns_log_directory : NULL);
+        const char *raw = f ? f : (ms ? ms->ns_log_directory : NULL);
+        derived.ns_log_directory = anchor_serve_path(raw, project_root_abs, false);
+        cfg.ns.log_directory = derived.ns_log_directory
+                             ? derived.ns_log_directory : raw;
     }
     cfg.ns.disable_proxies_check = ph_args_has_flag(args, "disable-proxies-check")
                                  || (ms && ms->ns_disable_proxies_check);
@@ -265,9 +379,15 @@ int ph_cmd_serve(const ph_cli_config_t *config,
                          && manifest.deploy.public_dir)
                         ? manifest.deploy.public_dir : NULL;
 
-    /* redirect config -- tier 1 (flag) > tier 2 (manifest [serve]) */
-    cfg.redir.bin_path = redir_bin ? redir_bin
-                       : (ms ? ms->redir_bin : NULL);
+    /* redirect config -- tier 1 (flag) > tier 2 (manifest [serve]).
+     * audit fix: anchor relative redir.bin_path under project_root_abs.
+     * see ns.bin_path above for the bare-name carve-out rationale. */
+    {
+        const char *raw = redir_bin ? redir_bin
+                                    : (ms ? ms->redir_bin : NULL);
+        derived.redir_bin = anchor_serve_path(raw, project_root_abs, true);
+        cfg.redir.bin_path = derived.redir_bin ? derived.redir_bin : raw;
+    }
 
     {
         int t1 = flag_int(args, "redirect-instances");
@@ -288,25 +408,45 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         cfg.redir.target_port = t1 > 0 ? t1
                               : (ms ? ms->redir_target_port : 0);
     }
+    /* audit fix: redirect.acme_webroot is a path that may come from the
+     * manifest as a relative value. Anchor it under project_root_abs so the
+     * child resolves the same directory regardless of phosphor's cwd. */
     {
         const char *f = ph_args_get_flag(args, "redirect-acme-webroot");
-        cfg.redir.acme_webroot = f ? f
-                               : (ms ? ms->redir_acme_webroot : NULL);
+        const char *raw = f ? f
+                            : (ms ? ms->redir_acme_webroot : NULL);
+        derived.redir_acme_webroot =
+            anchor_serve_path(raw, project_root_abs, false);
+        cfg.redir.acme_webroot = derived.redir_acme_webroot
+                               ? derived.redir_acme_webroot : raw;
     }
     {
         const char *f = ph_args_get_flag(args, "redirect-working-dir");
-        cfg.redir.working_dir = f ? f
-                              : (ms ? ms->redir_working_dir : NULL);
+        const char *raw = f ? f : (ms ? ms->redir_working_dir : NULL);
+        derived.redir_working_dir =
+            anchor_serve_path(raw, project_root_abs, false);
+        cfg.redir.working_dir = derived.redir_working_dir
+                              ? derived.redir_working_dir : raw;
     }
 
     /* if redirect target port not set, default to neonsignal port */
     if (cfg.redir.target_port == 0 && cfg.ns.port > 0)
         cfg.redir.target_port = cfg.ns.port;
 
+    /* audit fix: default child working_dir to the resolved project root.
+     * previously, when no flag or manifest setting was given, children
+     * inherited phosphor's cwd, which drifts if serve was launched from a
+     * subdirectory or via `cd ...; phosphor serve`. explicit flag or
+     * manifest values still win. */
+    if (!cfg.ns.working_dir)
+        cfg.ns.working_dir = project_root_abs;
+    if (!cfg.redir.working_dir)
+        cfg.redir.working_dir = project_root_abs;
+
     /* step 6: validate hosts and warn on privileged ports */
     if (cfg.ns.host && !is_valid_ip(cfg.ns.host)) {
         ph_log_error("serve: invalid neonsignal host address: %s", cfg.ns.host);
-        ph_free(www_root_derived);
+        serve_derived_paths_free(&derived);
         if (has_certs) ph_certs_config_destroy(&certs_cfg);
         if (has_manifest) ph_manifest_destroy(&manifest);
         ph_free(project_root_abs);
@@ -314,7 +454,7 @@ int ph_cmd_serve(const ph_cli_config_t *config,
     }
     if (cfg.redir.host && !is_valid_ip(cfg.redir.host)) {
         ph_log_error("serve: invalid redirect host address: %s", cfg.redir.host);
-        ph_free(www_root_derived);
+        serve_derived_paths_free(&derived);
         if (has_certs) ph_certs_config_destroy(&certs_cfg);
         if (has_manifest) ph_manifest_destroy(&manifest);
         ph_free(project_root_abs);
@@ -330,7 +470,7 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         if (ph_serve_check_binaries(&cfg, &berr) != PH_OK) {
             ph_log_error("serve: %s", berr ? berr->message : "binary check failed");
             ph_error_destroy(berr);
-            ph_free(www_root_derived);
+            serve_derived_paths_free(&derived);
             if (has_certs) ph_certs_config_destroy(&certs_cfg);
             if (has_manifest) ph_manifest_destroy(&manifest);
             ph_free(project_root_abs);
@@ -338,14 +478,51 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         }
     }
 
-    /* step 7b: ensure log directories exist before spawning neonsignal */
+    /* step 7b: ensure log directories exist before spawning neonsignal.
+     *
+     * audit fix (2026-04-08T11-07-17Z): previously this step used raw
+     * mkdir() and discarded every return value, so a nested
+     * log_directory like "var/log/phosphor" silently failed when
+     * "var/log" did not already exist -- neonsignal would then spawn
+     * with --enable-file-log configured but no log tree. Switch to
+     * recursive ph_fs_mkdir_p and fail-closed so users get a clear
+     * diagnostic instead of a broken file-log configuration.
+     *
+     * ph_fs_mkdir_p silences EEXIST internally, so pre-existing
+     * directories remain a no-op. */
     if (cfg.ns.log_directory) {
-        mkdir(cfg.ns.log_directory, 0755);
+        if (ph_fs_mkdir_p(cfg.ns.log_directory, 0755) != PH_OK) {
+            ph_log_error("serve: cannot create log directory '%s'",
+                         cfg.ns.log_directory);
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_FS;
+        }
+
         char subdir[512];
         snprintf(subdir, sizeof(subdir), "%s/debug", cfg.ns.log_directory);
-        mkdir(subdir, 0755);
+        if (ph_fs_mkdir_p(subdir, 0755) != PH_OK) {
+            ph_log_error("serve: cannot create log subdirectory '%s'",
+                         subdir);
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_FS;
+        }
+
         snprintf(subdir, sizeof(subdir), "%s/shell", cfg.ns.log_directory);
-        mkdir(subdir, 0755);
+        if (ph_fs_mkdir_p(subdir, 0755) != PH_OK) {
+            ph_log_error("serve: cannot create log subdirectory '%s'",
+                         subdir);
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_FS;
+        }
     }
 
     /* step 8: determine dashboard mode */
@@ -406,7 +583,7 @@ int ph_cmd_serve(const ph_cli_config_t *config,
             ph_log_error("serve: %s",
                           serr ? serr->message : "start failed");
             ph_error_destroy(serr);
-            ph_free(www_root_derived);
+            serve_derived_paths_free(&derived);
             if (has_certs) ph_certs_config_destroy(&certs_cfg);
             if (has_manifest) ph_manifest_destroy(&manifest);
             ph_free(project_root_abs);
@@ -504,9 +681,13 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         int fz_count = 0;
         int fz_owned_count = 0;
 
-        /* parse .gitignore (one pattern per line, skip comments/blanks) */
+        /* parse .gitignore (one pattern per line, skip comments/blanks).
+         * audit fix: read from project_root_abs, not the caller's cwd, so
+         * `phosphor serve --project /elsewhere` picks up the right file. */
         {
-            FILE *gi = fopen(".gitignore", "r");
+            char *gi_path = ph_path_join(project_root_abs, ".gitignore");
+            FILE *gi = gi_path ? fopen(gi_path, "r") : NULL;
+            ph_free(gi_path);
             if (gi) {
                 char line[256];
                 while (fgets(line, (int)sizeof(line), gi) && fz_count < 120) {
@@ -557,7 +738,7 @@ int ph_cmd_serve(const ph_cli_config_t *config,
 
     /* step 11: cleanup */
     ph_serve_destroy(session);
-    ph_free(www_root_derived);
+    serve_derived_paths_free(&derived);
     if (has_certs) ph_certs_config_destroy(&certs_cfg);
     if (has_manifest) ph_manifest_destroy(&manifest);
     ph_free(project_root_abs);
