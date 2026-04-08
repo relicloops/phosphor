@@ -87,19 +87,50 @@ static int run_letsencrypt(const ph_certs_config_t *config,
 
     if (!action) action = "request";
 
-    /* resolve account key path */
-    const char *key_path = config->account_key;
-    char *default_key = NULL;
-    if (!key_path || !*key_path) {
+    /* resolve account key path.
+     * audit fix (2026-04-08T17-06-51Z, finding 2):
+     *   - If the manifest supplied a relative account_key, anchor it
+     *     under project_root and containment-check so a manifest cannot
+     *     point at an arbitrary key outside the project tree.
+     *   - If the manifest supplied an absolute account_key, reject it
+     *     (defense-in-depth; parse_certs_config already rejects absolute
+     *     values, but the CLI path should still fail closed).
+     *   - Otherwise fall back to the historical $HOME/.phosphor/acme
+     *     account key, unchanged.
+     * heap_key owns either the anchored manifest path or the $HOME
+     * fallback, whichever applies; it is freed on every exit path. */
+    const char *key_path = NULL;
+    char *heap_key = NULL;
+    if (config->account_key && *config->account_key) {
+        if (ph_path_is_absolute(config->account_key)) {
+            ph_log_error("certs: account_key must be a relative path "
+                         "inside the project: %s",
+                         config->account_key);
+            return PH_ERR_VALIDATE;
+        }
+        heap_key = ph_path_join(project_root, config->account_key);
+        if (!heap_key) {
+            ph_log_error("certs: failed to anchor account_key under "
+                         "project root");
+            return PH_ERR_INTERNAL;
+        }
+        if (!ph_path_is_under(heap_key, project_root)) {
+            ph_log_error("certs: account_key escapes project root: %s",
+                         heap_key);
+            ph_free(heap_key);
+            return PH_ERR_VALIDATE;
+        }
+        key_path = heap_key;
+    } else {
         const char *home = getenv("HOME");
         if (home) {
             char *dir = ph_path_join(home, ".phosphor/acme");
             if (dir) {
-                default_key = ph_path_join(dir, "account.key");
+                heap_key = ph_path_join(dir, "account.key");
                 ph_free(dir);
             }
         }
-        key_path = default_key;
+        key_path = heap_key;
     }
 
     if (!key_path) {
@@ -114,7 +145,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
         if (domain_filter && strcmp(d->name, domain_filter) != 0) continue;
 
         if (ph_signal_interrupted()) {
-            ph_free(default_key);
+            ph_free(heap_key);
             return PH_ERR_SIGNAL;
         }
 
@@ -125,8 +156,54 @@ static int run_letsencrypt(const ph_certs_config_t *config,
         ph_free(cert_dir);
 
         if (!domain_dir) {
-            ph_free(default_key);
+            ph_free(heap_key);
             return PH_ERR_INTERNAL;
+        }
+
+        /* audit fix (2026-04-08T17-06-51Z, finding 2): webroot_abs holds
+         * the project-anchored webroot for this domain. Declared up-front
+         * so every subsequent cleanup path can unconditionally
+         * ph_free(webroot_abs) (ph_free handles NULL). */
+        char *webroot_abs = NULL;
+
+        /* audit fix (2026-04-08T17-06-51Z, finding 2): LE previously
+         * relied on parse-time rejection of absolute / traversal values
+         * in output_dir, dir_name, and webroot, but never re-checked the
+         * joined result against project_root. The local CA and local
+         * leaf pipelines already do this; LE is the inconsistent gap. */
+        if (!ph_path_is_under(domain_dir, project_root)) {
+            ph_log_error("certs: output directory escapes project root: %s",
+                         domain_dir);
+            ph_free(webroot_abs);
+            ph_free(domain_dir);
+            ph_free(heap_key);
+            return PH_ERR_VALIDATE;
+        }
+
+        /* Anchor the webroot under project_root so ph_acme_challenge_respond
+         * writes the HTTP-01 token to the correct tree regardless of
+         * phosphor's caller cwd. parse_certs_config already forbids
+         * absolute and traversal values, so a non-NULL webroot is safe
+         * to join; we still containment-check the result. */
+        if (d->webroot) {
+            if (ph_path_is_absolute(d->webroot)) {
+                ph_log_error("certs: webroot must be a relative path "
+                             "inside the project: %s", d->webroot);
+                ph_free(webroot_abs);
+                ph_free(domain_dir);
+                ph_free(heap_key);
+                return PH_ERR_VALIDATE;
+            }
+            webroot_abs = ph_path_join(project_root, d->webroot);
+            if (!webroot_abs ||
+                !ph_path_is_under(webroot_abs, project_root)) {
+                ph_log_error("certs: webroot escapes project root: %s",
+                             d->webroot);
+                ph_free(webroot_abs);
+                ph_free(domain_dir);
+                ph_free(heap_key);
+                return PH_ERR_VALIDATE;
+            }
         }
 
         /* audit fix (2026-04-08T11-07-17Z): build the effective SAN
@@ -145,8 +222,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                              sanerr ? sanerr->message : "unknown");
                 int rc = sanerr ? (int)sanerr->category : PH_ERR_INTERNAL;
                 ph_error_destroy(sanerr);
+                ph_free(webroot_abs);
                 ph_free(domain_dir);
-                ph_free(default_key);
+                ph_free(heap_key);
                 return rc;
             }
         }
@@ -158,7 +236,8 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 for (size_t s = 0; s < eff_count; s++)
                     ph_log_info("    %s", eff_sans[s]);
                 ph_log_info("  email: %s", d->email);
-                ph_log_info("  webroot: %s", d->webroot);
+                ph_log_info("  webroot: %s",
+                            webroot_abs ? webroot_abs : "(unset)");
                 ph_log_info("  output: %s", domain_dir);
                 ph_log_info("  account key: %s", key_path);
                 ph_log_info("  ACME flow:");
@@ -171,7 +250,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 ph_log_info("    7. extract HTTP-01 challenge");
                 ph_log_info("    8. compute key authorization");
                 ph_log_info("    9. write token to %s/.well-known/acme-challenge/",
-                            d->webroot);
+                            webroot_abs ? webroot_abs : "(unset)");
                 ph_log_info("   10. POST challenge response");
                 ph_log_info("   11. poll authorization until valid");
                 ph_log_info("   12. POST finalize with CSR");
@@ -183,6 +262,7 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 ph_log_info("dry-run: would verify LE cert for %s", d->name);
             }
             ph_cert_domain_sans_free(eff_sans, eff_count);
+            ph_free(webroot_abs);
             ph_free(domain_dir);
             processed++;
             continue;
@@ -198,8 +278,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 int rc = err ? (int)err->category : PH_ERR_PROCESS;
                 ph_error_destroy(err);
                 ph_cert_domain_sans_free(eff_sans, eff_count);
+                ph_free(webroot_abs);
                 ph_free(domain_dir);
-                ph_free(default_key);
+                ph_free(heap_key);
                 return rc;
             }
 
@@ -212,8 +293,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 int rc = err ? (int)err->category : PH_ERR_PROCESS;
                 ph_error_destroy(err);
                 ph_cert_domain_sans_free(eff_sans, eff_count);
+                ph_free(webroot_abs);
                 ph_free(domain_dir);
-                ph_free(default_key);
+                ph_free(heap_key);
                 return rc;
             }
 
@@ -240,8 +322,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
             if (!new_order_url) {
                 ph_free(account_url);
                 ph_cert_domain_sans_free(eff_sans, eff_count);
+                ph_free(webroot_abs);
                 ph_free(domain_dir);
-                ph_free(default_key);
+                ph_free(heap_key);
                 return PH_ERR_INTERNAL;
             }
             snprintf(new_order_url, new_order_cap, "%.*s/acme/new-order",
@@ -261,8 +344,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 ph_error_destroy(err);
                 ph_free(account_url);
                 ph_cert_domain_sans_free(eff_sans, eff_count);
+                ph_free(webroot_abs);
                 ph_free(domain_dir);
-                ph_free(default_key);
+                ph_free(heap_key);
                 return rc;
             }
             ph_free(new_order_url);
@@ -277,13 +361,14 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_free(finalize_url);
                     ph_free(account_url);
                     ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
                     ph_free(domain_dir);
-                    ph_free(default_key);
+                    ph_free(heap_key);
                     return PH_ERR_SIGNAL;
                 }
 
                 if (ph_acme_challenge_respond(key_path, account_url,
-                                               auth_urls[a], d->webroot,
+                                               auth_urls[a], webroot_abs,
                                                directory_url,
                                                &err) != PH_OK) {
                     ph_log_error("certs: ACME challenge failed: %s",
@@ -297,8 +382,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_free(finalize_url);
                     ph_free(account_url);
                     ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
                     ph_free(domain_dir);
-                    ph_free(default_key);
+                    ph_free(heap_key);
                     return rc;
                 }
             }
@@ -330,8 +416,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                     ph_free(finalize_url);
                     ph_free(account_url);
                     ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
                     ph_free(domain_dir);
-                    ph_free(default_key);
+                    ph_free(heap_key);
                     return rc;
                 }
             }
@@ -355,8 +442,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                                  cert_path);
                     ph_free(cert_path);
                     ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
                     ph_free(domain_dir);
-                    ph_free(default_key);
+                    ph_free(heap_key);
                     return PH_ERR_FS;
                 }
 
@@ -365,8 +453,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 if (ph_argv_init(&vb, 8) != PH_OK) {
                     ph_free(cert_path);
                     ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
                     ph_free(domain_dir);
-                    ph_free(default_key);
+                    ph_free(heap_key);
                     return PH_ERR_INTERNAL;
                 }
                 ph_argv_push(&vb, "openssl");
@@ -381,8 +470,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                 if (!vargv) {
                     ph_free(cert_path);
                     ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
                     ph_free(domain_dir);
-                    ph_free(default_key);
+                    ph_free(heap_key);
                     return PH_ERR_INTERNAL;
                 }
 
@@ -398,8 +488,9 @@ static int run_letsencrypt(const ph_certs_config_t *config,
                                  d->name);
                     ph_free(cert_path);
                     ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
                     ph_free(domain_dir);
-                    ph_free(default_key);
+                    ph_free(heap_key);
                     return PH_ERR_PROCESS;
                 }
 
@@ -417,17 +508,19 @@ static int run_letsencrypt(const ph_certs_config_t *config,
             ph_log_error("certs: unknown action '%s' "
                          "(expected: request, renew, verify)", action);
             ph_cert_domain_sans_free(eff_sans, eff_count);
+            ph_free(webroot_abs);
             ph_free(domain_dir);
-            ph_free(default_key);
+            ph_free(heap_key);
             return PH_ERR_USAGE;
         }
 
         ph_cert_domain_sans_free(eff_sans, eff_count);
+        ph_free(webroot_abs);
         ph_free(domain_dir);
         processed++;
     }
 
-    ph_free(default_key);
+    ph_free(heap_key);
 
     if (domain_filter && processed == 0) {
         ph_log_error("certs: no letsencrypt domain matching '%s'",
@@ -470,17 +563,47 @@ int ph_cmd_certs(const ph_cli_config_t *config,
         return PH_ERR_USAGE;
     }
 
-    /* resolve project root */
-    char cwd[PATH_MAX];
-    if (!getcwd(cwd, sizeof(cwd))) {
-        ph_log_error("certs: cannot determine working directory");
+    /* resolve project root to an absolute, normalized path.
+     * audit fix (2026-04-08T17-06-51Z, finding 2): previously this was
+     * left as the raw --project value or cwd, so every downstream
+     * ph_path_join was relative-anchored to the caller cwd. Mirror the
+     * ph_cmd_build resolver at src/commands/build_cmd.c:312-342. */
+    char *project_root_abs = NULL;
+    if (project_flag) {
+        if (ph_path_is_absolute(project_flag)) {
+            project_root_abs = ph_path_normalize(project_flag);
+        } else {
+            char cwd[PATH_MAX];
+            if (!getcwd(cwd, sizeof(cwd))) {
+                ph_log_error("certs: failed to get current directory");
+                return PH_ERR_INTERNAL;
+            }
+            char *joined = ph_path_join(cwd, project_flag);
+            if (joined) {
+                project_root_abs = ph_path_normalize(joined);
+                ph_free(joined);
+            }
+        }
+    } else {
+        char cwd[PATH_MAX];
+        if (!getcwd(cwd, sizeof(cwd))) {
+            ph_log_error("certs: failed to get current directory");
+            return PH_ERR_INTERNAL;
+        }
+        project_root_abs = ph_path_normalize(cwd);
+    }
+    if (!project_root_abs) {
+        ph_log_error("certs: failed to resolve project root");
         return PH_ERR_INTERNAL;
     }
-    const char *project_root = project_flag ? project_flag : cwd;
 
     /* find and load TOML manifest */
-    char *toml_path = ph_path_join(project_root, "template.phosphor.toml");
-    if (!toml_path) return PH_ERR_INTERNAL;
+    char *toml_path = ph_path_join(project_root_abs,
+                                    "template.phosphor.toml");
+    if (!toml_path) {
+        ph_free(project_root_abs);
+        return PH_ERR_INTERNAL;
+    }
 
     ph_error_t *err = NULL;
     ph_certs_config_t certs_cfg;
@@ -489,6 +612,7 @@ int ph_cmd_certs(const ph_cli_config_t *config,
         int rc = err ? (int)err->category : PH_ERR_CONFIG;
         ph_error_destroy(err);
         ph_free(toml_path);
+        ph_free(project_root_abs);
         return rc;
     }
     ph_free(toml_path);
@@ -496,11 +620,25 @@ int ph_cmd_certs(const ph_cli_config_t *config,
     if (!certs_cfg.present) {
         ph_log_error("certs: no [certs] section in template.phosphor.toml");
         ph_certs_config_destroy(&certs_cfg);
+        ph_free(project_root_abs);
         return PH_ERR_CONFIG;
     }
 
-    /* override output directory if --output given */
+    /* override output directory if --output given.
+     * audit fix (2026-04-08T17-06-51Z, finding 2): previously the raw
+     * --output value replaced certs_cfg.output_dir without re-running the
+     * absolute / traversal checks that parse_certs_config applies at load
+     * time, so --output=../../escape could push LE output outside the
+     * project root. Re-validate inline against the same two rules. */
     if (output_flag) {
+        if (ph_path_is_absolute(output_flag) ||
+            ph_path_has_traversal(output_flag)) {
+            ph_log_error("certs: --output must be a relative path inside "
+                         "the project: %s", output_flag);
+            ph_certs_config_destroy(&certs_cfg);
+            ph_free(project_root_abs);
+            return PH_ERR_VALIDATE;
+        }
         ph_free(certs_cfg.output_dir);
         size_t len = strlen(output_flag);
         certs_cfg.output_dir = ph_alloc(len + 1);
@@ -544,6 +682,7 @@ int ph_cmd_certs(const ph_cli_config_t *config,
                 ph_log_error("certs: no domain matching '%s' in manifest",
                              domain_filter);
                 ph_certs_config_destroy(&certs_cfg);
+                ph_free(project_root_abs);
                 return PH_ERR_CONFIG;
             }
             do_local       = (found->mode == PH_CERT_LOCAL);
@@ -551,25 +690,27 @@ int ph_cmd_certs(const ph_cli_config_t *config,
         }
 
         if (do_local) {
-            exit_code = run_local(&certs_cfg, project_root, f_ca_only,
+            exit_code = run_local(&certs_cfg, project_root_abs, f_ca_only,
                                    domain_filter, f_dry_run, f_force);
         }
         if (exit_code == 0 && !ph_signal_interrupted()
             && do_letsencrypt && !f_ca_only) {
-            exit_code = run_letsencrypt(&certs_cfg, project_root,
+            exit_code = run_letsencrypt(&certs_cfg, project_root_abs,
                                          domain_filter, "request",
                                          directory_url,
                                          f_dry_run, f_force);
         }
     } else if (f_local) {
-        exit_code = run_local(&certs_cfg, project_root, f_ca_only,
+        exit_code = run_local(&certs_cfg, project_root_abs, f_ca_only,
                               domain_filter, f_dry_run, f_force);
     } else if (f_letsencrypt) {
-        exit_code = run_letsencrypt(&certs_cfg, project_root, domain_filter,
+        exit_code = run_letsencrypt(&certs_cfg, project_root_abs,
+                                     domain_filter,
                                      action, directory_url,
                                      f_dry_run, f_force);
     }
 
     ph_certs_config_destroy(&certs_cfg);
+    ph_free(project_root_abs);
     return exit_code;
 }
