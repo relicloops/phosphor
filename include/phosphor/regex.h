@@ -5,10 +5,13 @@
 #include "phosphor/error.h"
 
 /*
- * optional PCRE2-based regex matching for template filters.
+ * PCRE2-based regex matching for template filters.
  *
- * availability check is always available. actual regex compilation
- * and execution require PCRE2 (compile with -Dpcre2=true).
+ * ph_regex_available is always linkable. regex compilation and
+ * execution depend on PCRE2, which the top-level Meson build wires in
+ * unconditionally and defines PHOSPHOR_HAS_PCRE2. The #ifdef guard
+ * below is kept so the header still reads on its own and so a future
+ * build flag can re-enable opt-in wiring without touching the header.
  */
 
 /* ---- compiled regex handle ---- */
@@ -27,7 +30,7 @@ typedef struct ph_regex ph_regex_t;
  */
 bool ph_regex_available(void);
 
-/* ---- PCRE2-dependent (compile with -Dpcre2=true) ---- */
+/* ---- PCRE2-dependent (PHOSPHOR_HAS_PCRE2) ---- */
 
 #ifdef PHOSPHOR_HAS_PCRE2
 

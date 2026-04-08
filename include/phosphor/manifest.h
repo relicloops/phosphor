@@ -107,9 +107,9 @@ typedef struct {
     size_t  exclude_count;
     char  **deny;
     size_t  deny_count;
-    char  **exclude_regex;       /* PCRE2 patterns -- requires -Dpcre2=true */
+    char  **exclude_regex;       /* PCRE2 patterns (PHOSPHOR_HAS_PCRE2) */
     size_t  exclude_regex_count;
-    char  **deny_regex;          /* PCRE2 patterns -- requires -Dpcre2=true */
+    char  **deny_regex;          /* PCRE2 patterns (PHOSPHOR_HAS_PCRE2) */
     size_t  deny_regex_count;
     char  **binary_ext;
     size_t  binary_ext_count;

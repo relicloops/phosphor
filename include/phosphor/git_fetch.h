@@ -5,10 +5,14 @@
 #include "phosphor/error.h"
 
 /*
- * optional remote git template fetching.
+ * remote git template fetching.
  *
- * URL parsing and cleanup are always available. the actual clone
- * operation requires libgit2 (compile with -Dlibgit2=true).
+ * URL parsing and cleanup have no external dependencies. the clone
+ * operation depends on libgit2, which the top-level Meson build wires
+ * in unconditionally and defines PHOSPHOR_HAS_LIBGIT2. The #ifdef
+ * guard below is kept so the header still reads on its own and so a
+ * future build flag can re-enable opt-in wiring without touching the
+ * header.
  */
 
 /* ---- parsed URL ---- */
@@ -64,7 +68,7 @@ void ph_git_url_destroy(ph_git_url_t *parsed);
  */
 ph_result_t ph_git_cleanup_clone(const char *clone_path, ph_error_t **err);
 
-/* ---- libgit2-dependent (compile with -Dlibgit2=true) ---- */
+/* ---- libgit2-dependent (PHOSPHOR_HAS_LIBGIT2) ---- */
 
 #ifdef PHOSPHOR_HAS_LIBGIT2
 
@@ -72,8 +76,10 @@ ph_result_t ph_git_cleanup_clone(const char *clone_path, ph_error_t **err);
  * ph_git_fetch_template -- clone a remote git repository to a local
  * temporary directory.
  *
- * creates a temporary directory under /tmp:
- *   /tmp/.phosphor-clone-<pid>-<timestamp>/
+ * creates a temporary directory via mkdtemp(3) under /tmp:
+ *   /tmp/.phosphor-clone-XXXXXX/
+ * where XXXXXX is a 6-character random suffix chosen atomically by
+ * mkdtemp. the directory is created with mode 0700.
  *
  * if parsed->ref is non-NULL, checks out that branch/tag/commit.
  *

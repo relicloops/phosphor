@@ -5,10 +5,13 @@
 #include "phosphor/error.h"
 
 /*
- * optional archive template extraction.
+ * archive template extraction.
  *
- * format detection and cleanup are always available. the actual extraction
- * requires libarchive (compile with -Dlibarchive=true).
+ * format detection and cleanup have no external dependencies. extraction
+ * depends on libarchive, which the top-level Meson build wires in
+ * unconditionally and defines PHOSPHOR_HAS_LIBARCHIVE. The #ifdef guard
+ * below is kept so the header still reads on its own and so a future
+ * build flag can re-enable opt-in wiring without touching the header.
  */
 
 /* ---- archive format detection ---- */
@@ -41,15 +44,17 @@ ph_archive_format_t ph_archive_detect(const char *path);
 ph_result_t ph_archive_cleanup_extract(const char *extract_path,
                                         ph_error_t **err);
 
-/* ---- libarchive-dependent (compile with -Dlibarchive=true) ---- */
+/* ---- libarchive-dependent (PHOSPHOR_HAS_LIBARCHIVE) ---- */
 
 #ifdef PHOSPHOR_HAS_LIBARCHIVE
 
 /*
  * ph_archive_extract -- extract an archive to a temporary directory.
  *
- * creates a temporary directory under /tmp:
- *   /tmp/.phosphor-extract-<pid>-<timestamp>/
+ * creates a temporary directory via mkdtemp(3) under /tmp:
+ *   /tmp/.phosphor-extract-XXXXXX/
+ * where XXXXXX is a 6-character random suffix chosen atomically by
+ * mkdtemp. the directory is created with mode 0700.
  *
  * if checksum is non-NULL, it must be in the format "sha256:<64-hex-chars>".
  * the file is verified before extraction begins. mismatch -> PH_ERR_VALIDATE.
