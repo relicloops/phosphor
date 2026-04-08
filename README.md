@@ -51,6 +51,33 @@ or from an external template:
 ./build/phosphor create --name=my-site --template=./templates/cathode-landing
 ```
 
+**Configuration**
+
+phosphor discovers optional project-level config by walking upward from
+the current directory looking for `.phosphor.toml` or `phosphor.toml`.
+Once found, values from this file feed template variable resolution.
+
+template variable precedence, highest to lowest:
+
+1. CLI flags (e.g. `--name=`, `--description=`)
+2. environment variables
+3. discovered `.phosphor.toml` / `phosphor.toml`
+4. manifest defaults
+
+some CLI flags remap to differently-named template variables. for
+example, `glow --description=...` sets the `project_description` variable
+and `glow --github-url=...` sets `github_url`. the remappings are declared
+in the command spec table and are transparent to template authors.
+
+minimal `.phosphor.toml`:
+
+```toml
+[variables]
+project_name = "my-site"
+project_description = "my neon site"
+github_url = "https://github.com/me/my-site"
+```
+
 **Building**
 
 phosphor uses Meson with the Ninja backend.
@@ -160,6 +187,30 @@ optional checksum verification:
 phosphor create --name=my-project --template=./template.tar.gz \
     --checksum=sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 ```
+
+**Manifest schema**
+
+the template manifest (`template.phosphor.toml` or `manifest.toml`)
+supports the following sections:
+
+| Section                 | Status        |
+|-------------------------|---------------|
+| `[defaults]`            | active        |
+| `[[variables]]`         | active        |
+| `[filters]`             | active        |
+| `[build]`               | active        |
+| `[deploy]`              | active        |
+| `[serve]`               | active        |
+| `[serve.neonsignal]`    | active        |
+| `[serve.redirect]`      | active        |
+| `[fuzzy]`               | active        |
+| `[[ops]]`               | active        |
+| `[[hooks]]`             | parsed only   |
+
+see `docs/source/reference/template-manifest-schema.rst` for the full
+field reference. `[[hooks]]` is parsed and stored but not yet executed;
+the matching `create --allow-hooks` flag is reserved until the runtime
+lands.
 
 **TLS certificates**
 
