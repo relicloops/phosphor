@@ -1,241 +1,280 @@
-# Plan: Update docs + commit all pending changes
+# Phosphor 2026-04-08T11-07-17Z Bugs Audit Remediation Plan
 
-## Pre-commit: Update docs, help, website
+## Context
 
-Before committing, these files need updating:
-- `src/dashboard/db_popup.c` -- help popup already updated
-- `docs/source/reference/dashboard-event-loop.rst` -- already updated
-- `website/src/pages/DashboardManual.tsx` -- already updated
-- `website/src/pages/DashboardImplementation.tsx` -- already updated
-- Regenerate AI-History: `just ai-history` from `website/`
-- Rebuild website: `just build` from `website/`
+A new codex audit landed at
+`.claude/codex-audit-fix/2026-04-08T11-07-17Z.bugs.audit.md`. This is
+a static source audit that reports 5 concrete defects (2 HIGH, 3
+MEDIUM) plus README drift. All findings were re-verified against the
+tree during Phase 1 exploration. No bug is a false positive.
 
-## Commit Plan (9 commits, SoC-ordered)
+The goal is to fix the correctness issues in `src/` and resolve the
+README drift in a single remediation pass without changing any
+public API contracts or introducing new Meson options.
 
-### Commit 1: cJSON vendor + ph_json wrapper
+---
 
-```
-feat(json): vendor cJSON v1.7.18 and add ph_json wrapper API
+## Verified Findings
 
-Add cJSON as a Meson cmake subproject with PHOSPHOR_HAS_CJSON compile
-flag. Create include/phosphor/json.h and src/core/json.c providing
-ph_json_parse, ph_json_parse_file, ph_json_get_string,
-ph_json_get_object, ph_json_add_object, ph_json_add_string,
-ph_json_print, ph_json_destroy -- thin wrappers over cJSON following
-the ph_ naming convention.
-```
+### 1. HIGH -- ACME and local leaf pipelines drop `domain.name`
 
-Files:
-- `subprojects/cjson.wrap`
-- `subprojects/cjson/` (vendored)
-- `include/phosphor/json.h`
-- `src/core/json.c`
-- `meson.build` (cjson dep + json.c source)
+**Sites:**
+- `src/commands/certs_cmd.c:222-227` (`ph_acme_order_create` call
+  passes only `d->san` / `d->san_count`).
+- `src/commands/certs_cmd.c:283-287` (`ph_acme_finalize` call, same
+  bug).
+- `src/certs/certs_leaf.c:141-147` (SAN cnf only written when
+  `san_count > 0`).
+- `src/certs/certs_leaf.c:168` (`-config` is `/dev/null` when
+  `san_count == 0`).
+- `src/certs/certs_leaf.c:206-211` (`-extfile` / `-extensions v3_req`
+  gated on `san_count > 0`).
 
-### Commit 2: ACME migration to ph_json
+**Downstream reject points:**
+- `src/certs/acme_order.c:24-29` -- returns `PH_ERR_INTERNAL` on
+  `domain_count == 0`.
+- `src/certs/acme_finalize.c:32-39` -- returns `PH_ERR_INTERNAL` on
+  `domain_count == 0`.
+- `src/certs/acme_finalize.c:81-86` -- calls `ph_cert_san_write_cnf`
+  with the same domains array.
+- `src/certs/certs_san.c:34-43` -- `ph_cert_san_write_cnf` rejects
+  `san_count == 0` with `PH_ERR_INTERNAL`.
+- `src/certs/acme_finalize.c:90` and `src/certs/certs_leaf.c:154` --
+  both set CSR subject to `/CN=<domains[0]>` or `/CN=<d->name>`, so
+  `domains[0]` must be the primary.
 
-```
-refactor(certs): migrate ACME module from hand-rolled JSON to ph_json
+**Consequence:**
+- Manifests like `[[certs.domains]] name = "example.com"` (no `san`)
+  fail in Let's Encrypt because `domain_count == 0`.
+- Manifests with `san` but without `name` in the san list generate
+  leaf certs whose SANs do not include the primary name.
+- Without SAN entries, modern TLS clients reject the leaf cert.
 
-Replace all json_extract_string/json_extract_string_array calls with
-ph_json_parse/ph_json_get_string across 4 ACME files. Remove the old
-acme_json.h and acme_json.c. Zero internal headers remain in src/.
-```
+### 2. HIGH -- `phosphor certs --generate --domain=X` ignores the filter
 
-Files:
-- `src/certs/acme_account.c`
-- `src/certs/acme_order.c`
-- `src/certs/acme_challenge.c`
-- `src/certs/acme_finalize.c`
-- `src/certs/acme_json.c` (deleted)
-- `src/certs/acme_json.h` (deleted)
+**Site:** `src/commands/certs_cmd.c:484-492` -- hard-codes `NULL`
+for the domain filter in both `run_local` and `run_letsencrypt`
+dispatch calls despite reading `domain_filter` at line 420.
 
-### Commit 3: Dashboard refactor + TUI features
+**Consequence:**
+- Every configured domain is processed.
+- LE rate-limit risk on accidental bulk renewals.
+- Local leaf certs overwritten even when the user explicitly scoped
+  the action to one domain.
 
-```
-feat(dashboard): refactor into granular files with cursor, selection,
-search, save, fuzzy finder, JSON viewer, and popup system
+**Edge case:** `run_local` already errors out with `"no local domain
+matching"` if `domain_filter && generated == 0`. A filter that
+matches an LE-only domain would otherwise trip that error during the
+`--generate` dispatch. The fix must detect the target domain's mode
+upfront and skip the non-matching pipeline.
 
-Split monolithic dashboard.c into 15 db_*.c files with single
-responsibility each. Add line cursor with auto-follow, vim-style
-visual select (v), JSON export (V), :save/:saveall/:clear commands,
-fuzzy log finder (g) with file picker, JSON viewer popup with tree
-folding, inline JSON fold (z), viewport freeze, and 6-type popup
-system.
-```
+### 3. MEDIUM -- serve preflight rejects bare PATH binary names
 
-Files:
-- `src/dashboard/db_types.h`
-- `src/dashboard/db_ring.c`
-- `src/dashboard/db_layout.c`
-- `src/dashboard/db_draw.c`
-- `src/dashboard/db_popup.c`
-- `src/dashboard/db_evt_pipe.c`
-- `src/dashboard/db_evt_signal.c`
-- `src/dashboard/db_evt_child.c`
-- `src/dashboard/db_evt_key.c`
-- `src/dashboard/db_evt_tick.c`
-- `src/dashboard/db_event.c`
-- `src/dashboard/db_lifecycle.c`
-- `src/dashboard/db_fuzzy.c`
-- `src/dashboard/db_json_fold.c`
-- `src/dashboard/dashboard.c`
-- `include/phosphor/dashboard.h`
-- `meson.build` (dashboard source entries)
+**Sites:**
+- `src/serve/serve.c:71-87` (`ns.bin_path` branch) and
+  `src/serve/serve.c:89-107` (`redir.bin_path` branch) use `access()`
+  whenever `bin_path != NULL`.
+- `src/commands/serve_cmd.c:62-69` (`anchor_serve_path`) and
+  `src/commands/serve_cmd.c:250-254` / `385-390`
+  (`cfg.ns.bin_path = derived.ns_bin ? derived.ns_bin : raw`) both
+  intentionally leave bare names unanchored so PATH lookup can run
+  later.
 
-### Commit 4: Panel tabs (neonsignal live-stream / debug-stream)
+**Consequence:** `--neonsignal-bin=neonsignal` and manifest values
+like `bin = "neonsignal"` fail preflight because `access("neonsignal",
+X_OK)` looks in the current working directory, not PATH. The inline
+comment at `serve_cmd.c:246-249` and README `lines 89-90` both claim
+PATH-based preflight, which is currently wrong for any configured
+bare name.
 
-```
-feat(dashboard): add per-panel tabs with stdout/stderr stream routing
+### 4. MEDIUM -- serve log-dir bootstrap non-recursive, silent on failure
 
-Introduce db_tab_t struct with per-tab ring buffer, scroll, cursor,
-selection, and fold state. Accessor inlines (panel_ring, panel_scroll,
-etc.) transparently resolve to active tab or legacy inline fields.
-feed_accum_multi routes completed lines to matching tabs by source.
-Neonsignal panel gets live-stream (stdout) and debug-stream (stderr)
-tabs switchable with 1/2 keys. Non-tabbed panels unchanged.
-```
+**Site:** `src/commands/serve_cmd.c:481-489` -- three raw `mkdir()`
+calls whose return values are discarded. The top-level
+`cfg.ns.log_directory` (already anchored at
+`serve_cmd.c:361-370`) may be nested (e.g. `var/log/phosphor`), so
+the parent component may not exist when step 7b runs.
 
-Files:
-- `src/dashboard/db_types.h`
-- `include/phosphor/dashboard.h`
-- `src/dashboard/dashboard.c`
-- `src/dashboard/db_ring.c`
-- `src/dashboard/db_evt_pipe.c`
-- `src/dashboard/db_draw.c`
-- `src/dashboard/db_evt_key.c`
-- `src/dashboard/db_lifecycle.c`
-- `src/dashboard/db_json_fold.c`
-- `src/dashboard/db_fuzzy.c`
-- `src/commands/serve_cmd.c`
-- `src/dashboard/db_popup.c`
+**Consequence:** Nested `log_directory` values silently fail to
+create. Downstream, neonsignal launches with `--enable-file-log`
+configured but without the log tree that was supposed to exist.
+Permission / `ENAMETOOLONG` / `ENOSPC` failures are equally
+invisible.
 
-### Commit 5: Neonsignal logging flags
+### 5. MEDIUM -- `filament` returns success while printing "not yet implemented"
 
-```
-feat(serve): add neonsignal logging flags to serve pipeline
+**Site:** `src/commands/filament_cmd.c:8-23`. Handler prints
+`"filament: not yet implemented"` and then returns `0`.
 
-Add 6 new flags (--enable-debug, --enable-log, --enable-log-color,
---enable-file-log, --log-directory, --disable-proxies-check) flowing
-from template.phosphor.toml [serve.neonsignal] through serve config
-to neonsignal spawn argv. Three-tier resolution: CLI > manifest >
-default.
-```
+**Consequence:** Scripts, CI, and users cannot distinguish the
+placeholder from a successful command. A non-zero exit is the only
+honest signal.
 
-Files:
-- `include/phosphor/serve.h`
-- `include/phosphor/manifest.h`
-- `src/template/manifest_load.c`
-- `src/commands/phosphor_commands.c`
-- `src/commands/serve_cmd.c`
-- `src/serve/serve.c`
+### 6. README drift
 
-### Commit 6: Embedded shell panel
+- `README.md:173-178` -- LE examples missing `--letsencrypt`.
+- `README.md:183` -- documents `--output-dir=<path>`; real flag is `--output`.
+- `README.md:17-29` -- command list omits `filament`.
+- `README.md:68-71` -- implies ncurses is unconditional; it is
+  system-first with wrap fallback.
+- `README.md:89-90` -- PATH preflight claim depends on Fix 3.
 
-```
-feat(dashboard): add embedded shell panel with PTY-backed command
-execution, views, and screen overlays
+---
 
-Introduce DB_MODE_SHELL with db_shell.c handling PTY spawning via
-posix_openpt, view tabs (up to 4), screen popups for command output,
-and integrated event loop polling of PTY master fds. Shell opens with
-Ctrl+P, closes with Ctrl+Q, views cycle with Ctrl+B/R, screens
-navigate with Ctrl+N, minimize with Ctrl+X, save with Ctrl+S.
+## Recommended Fixes
+
+### Fix 1 -- Effective-SAN helper + application (Finding 1)
+
+Add a public helper in `include/phosphor/certs.h` and implement
+it in `src/certs/certs_san.c`:
+
+```c
+ph_result_t ph_cert_domain_effective_sans(
+    const ph_cert_domain_t *domain,
+    char ***out_list,
+    size_t *out_count,
+    ph_error_t **err);
+
+void ph_cert_domain_sans_free(char **list, size_t count);
 ```
 
-Files:
-- `src/dashboard/db_types.h`
-- `src/dashboard/db_shell.c`
-- `src/dashboard/dashboard.c`
-- `src/dashboard/db_layout.c`
-- `src/dashboard/db_event.c`
-- `src/dashboard/db_evt_key.c`
-- `src/dashboard/db_evt_child.c`
-- `src/dashboard/db_draw.c`
-- `src/dashboard/db_lifecycle.c`
-- `src/dashboard/db_popup.c`
-- `meson.build`
+The helper allocates a heap list with `domain->name` at index 0
+followed by each unique entry from `domain->san` that does not
+string-equal `domain->name`. List is guaranteed non-empty.
 
-### Commit 7: Website dashboard pages + nav dropdown
+Apply in `src/commands/certs_cmd.c run_letsencrypt`: build the
+effective list once per iteration, pass it to both
+`ph_acme_order_create` and `ph_acme_finalize`, free at every
+loop-exit path.
 
-```
-feat(website): add dashboard landing, manual, and implementation pages
-with NavDropdown component
+Apply in `src/certs/certs_leaf.c`: drop the `san_count > 0` gates
+at lines 141, 168, and 206-211. Build the effective list
+unconditionally via the helper. Always pass `cnf_path` to openssl
+req and always append `-extfile/-extensions v3_req` to openssl
+x509.
 
-Create Dashboard.tsx landing with card links, DashboardManual.tsx with
-16-section granular user guide using initScrollTracker,
-DashboardImplementation.tsx replacing DashboardArchitecture with
-updated content. Add reusable NavDropdown.tsx hover dropdown for
-header navigation. Update app.tsx routes and .cathode route registry.
-```
+No change to `ph_acme_order_create`, `ph_acme_finalize`, or
+`ph_cert_san_write_cnf` themselves -- they remain strict about
+`count > 0`; the fix is upstream.
 
-Files:
-- `website/src/pages/Dashboard.tsx`
-- `website/src/pages/DashboardManual.tsx`
-- `website/src/pages/DashboardImplementation.tsx`
-- `website/src/pages/DashboardArchitecture.tsx`
-- `website/src/components/NavDropdown.tsx`
-- `website/src/components/Header.tsx`
-- `website/src/app.tsx`
-- `website/src/static/css/pages/dashboard.css`
-- `website/src/static/css/pages/dashboard-manual.css`
-- `website/src/static/css/pages/dashboard-architecture.css`
-- `website/src/static/css/components/nav-dropdown.css`
-- `website/src/static/dashboard.html`
-- `website/src/static/dashboard-manual.html`
-- `website/src/static/dashboard-implementation.html`
-- `website/src/static/.cathode`
+### Fix 2 -- Honor `--generate --domain=X` (Finding 2)
 
-### Commit 8: Website manifest logging config
+Rewrite `src/commands/certs_cmd.c:484-492` to pre-resolve the
+target domain's mode and dispatch only the matching pipeline:
 
-```
-chore(website): enable neonsignal logging features in manifest
+```c
+if (f_generate) {
+    bool do_local = true;
+    bool do_letsencrypt = true;
 
-Add enable_debug, enable_log, enable_log_color, enable_file_log,
-and log_directory settings to [serve.neonsignal] section of the
-website template.phosphor.toml.
-```
+    if (domain_filter) {
+        const ph_cert_domain_t *found = NULL;
+        for (size_t i = 0; i < certs_cfg.domain_count; i++) {
+            if (strcmp(certs_cfg.domains[i].name, domain_filter) == 0) {
+                found = &certs_cfg.domains[i];
+                break;
+            }
+        }
+        if (!found) {
+            ph_log_error("certs: no domain matching '%s' in manifest",
+                         domain_filter);
+            ph_certs_config_destroy(&certs_cfg);
+            return PH_ERR_CONFIG;
+        }
+        do_local       = (found->mode == PH_CERT_LOCAL);
+        do_letsencrypt = (found->mode == PH_CERT_LETSENCRYPT);
+    }
 
-Files:
-- `website/template.phosphor.toml`
-
-### Commit 9: Docs, reference, plans, AI-History
-
-```
-docs: update plans, reference docs, and AI-History for dashboard
-tabs, logging flags, and embedded shell
-
-Update dashboard-event-loop.rst with panel tabs, embedded shell,
-and DB_MODE_SHELL sections. Update summary plan with new completed
-entries. Rename soc-audit plan to COMPLETED. Regenerate AI-History
-and rebuild website.
+    if (do_local) {
+        exit_code = run_local(&certs_cfg, project_root, false,
+                               domain_filter, f_dry_run, f_force);
+    }
+    if (exit_code == 0 && !ph_signal_interrupted() && do_letsencrypt) {
+        exit_code = run_letsencrypt(&certs_cfg, project_root,
+                                     domain_filter, "request",
+                                     directory_url, f_dry_run, f_force);
+    }
+}
 ```
 
-Files:
-- `docs/source/reference/dashboard-event-loop.rst`
-- `docs/source/plans/summary.[ACTIVE].rst`
-- `docs/source/plans/soc-audit-json-consolidation.[COMPLETED].rst`
-- `docs/actual.plan.md`
-- `website/src/static/ai-history.json`
+### Fix 3 -- Bare-name PATH preflight (Finding 3)
 
-## Excluded from commits
+Add `static bool is_bare_name(const char *s)` to
+`src/serve/serve.c`. Rewrite `ph_serve_check_binaries` to check
+bareness before falling to `access()`, routing bare names to
+`find_in_path`. Apply the pattern to both `ns.bin_path` and
+`redir.bin_path` branches.
 
-Per commit-guidelines, never stage:
-- `.claude/` directory
-- `CLAUDE.md`, `GEMINI.md`, `AGENTS.md`
+### Fix 4 -- Checked recursive log-dir bootstrap (Finding 4)
 
-Also exclude generated/test data:
-- `website/04.04.2026.*.json`
-- `website/05.04.2026.*.json`
-- `website/phosphor.*.json`
-- `website/log/`
-- `website/log.x`
-- `website/package-lock.json` (unless intentional)
+Replace the three raw `mkdir()` calls at
+`src/commands/serve_cmd.c:481-489` with `ph_fs_mkdir_p` from
+`include/phosphor/platform.h:44`. Treat each failure as
+`PH_ERR_FS` with a clear error message and full cleanup.
+
+### Fix 5 -- `filament` exits non-zero (Finding 5)
+
+Replace `return 0;` with `return PH_ERR_GENERAL;` at
+`src/commands/filament_cmd.c:22`. Keep the `printf` lines.
+
+### Fix 6 -- README drift
+
+Surgical edits to `README.md`:
+
+1. Lines 173-178: rewrite LE examples to include `--letsencrypt`.
+2. Line 183: rename `--output-dir` to `--output`.
+3. Lines 17-29: add `filament` entry as `[experimental]`.
+4. Lines 68-71: carve out ncurses from the "built unconditionally"
+   claim.
+
+---
+
+## Critical files to modify
+
+| File | Findings | Notes |
+|------|----------|-------|
+| `include/phosphor/certs.h` | 1 | add helper + free prototype |
+| `src/certs/certs_san.c` | 1 | implement helper + free |
+| `src/commands/certs_cmd.c` | 1, 2 | apply helper, rewrite `--generate` dispatch |
+| `src/certs/certs_leaf.c` | 1 | remove `san_count > 0` gates, use helper |
+| `src/serve/serve.c` | 3 | `is_bare_name` helper + preflight rewrite |
+| `src/commands/serve_cmd.c` | 4 | swap `mkdir` for `ph_fs_mkdir_p`, fail-closed |
+| `src/commands/filament_cmd.c` | 5 | return `PH_ERR_GENERAL` |
+| `README.md` | 6 | certs examples, `--output`, `filament`, ncurses note |
+
+## Implementation order
+
+```
+Fix 1 infra           -> add helper + free in certs_san.c / certs.h
+Fix 1 application #1  -> certs_cmd.c run_letsencrypt (order + finalize)
+Fix 1 application #2  -> certs_leaf.c (cnf + req + x509)
+Fix 2                 -> certs_cmd.c --generate dispatch
+Fix 3                 -> serve.c ph_serve_check_binaries
+Fix 4                 -> serve_cmd.c step 7b
+Fix 5                 -> filament_cmd.c return
+Fix 6                 -> README.md
+```
+
+## Commit granularity
+
+1. `fix(certs): always include primary domain name in CSR and ACME order`
+2. `fix(certs): honor --domain filter in --generate dispatch`
+3. `fix(serve): resolve bare binary names via PATH in preflight`
+4. `fix(serve): use recursive mkdir_p for log directory bootstrap`
+5. `fix(filament): return non-zero when command is not implemented`
+6. `docs(readme): update certs examples, output flag, filament, ncurses`
 
 ## Verification
 
-After all commits:
-1. `ninja -C build` -- zero warnings
-2. `./build/phosphor version` -- smoke test
-3. `git log --oneline -9` -- verify commit messages
-4. `git diff HEAD~9..HEAD --stat` -- verify scope
+Static (safe, no build): grep-based checks on each fix site.
+Dynamic (requires build; ask user first): meson build, version
+smoke, `filament --path .` exit code, `certs --generate
+--domain=nonexistent` error, cert dry-run SAN listing, serve
+bare-name preflight, serve log-dir bootstrap.
+
+## Out of scope
+
+- Changing the `ph_acme_*` or `ph_cert_san_write_cnf` signatures.
+- Meson graph changes for optional deps.
+- Hiding `filament` from help.
+- README rewording beyond the five drift items.
