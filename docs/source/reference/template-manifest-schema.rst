@@ -335,6 +335,28 @@ Top-level keys:
      - no
      - Working directory for path resolution.
 
+[fuzzy] -- dashboard fuzzy search
+----------------------------------
+
+Optional. tunes the dashboard's fuzzy log picker and file search.
+``phosphor serve`` loads ``.gitignore`` from the project root and
+merges it with ``[fuzzy].exclude`` to build the set of paths that
+the dashboard's fuzzy browser will skip.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 10 60
+
+   * - Key
+     - Type
+     - Required
+     - Description
+   * - ``exclude``
+     - array of strings
+     - no
+     - Additional glob patterns (beyond ``.gitignore``) to exclude
+       from the dashboard fuzzy search index.
+
 [[ops]] -- operations
 ---------------------
 

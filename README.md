@@ -24,6 +24,7 @@ phosphor clean    -- remove build artifacts and stale staging directories
 phosphor rm       -- remove a specific path within the project root
 phosphor certs    -- generate TLS certificates (local CA or Let's Encrypt ACME)
 phosphor doctor   -- run project diagnostics
+phosphor filament -- [experimental] reserved for future functionality
 phosphor version  -- print version information
 phosphor help     -- show help for a command
 ```
@@ -65,12 +66,12 @@ meson setup build
 ninja -C build
 ```
 
-to disable optional vendored dependencies:
-
-```bash
-meson setup build -Dlibgit2=false -Dlibarchive=false -Dpcre2=false
-ninja -C build
-```
+the only meson options are `-Dscript_fallback=true` (enables shell-script
+fallbacks for build/clean) and `-Ddashboard=false` (disables the ncurses
+`phosphor serve` dashboard). vendored dependencies -- toml-c, libgit2,
+libarchive, PCRE2, cJSON, libcurl -- are built unconditionally from wraps.
+ncurses is the exception: meson resolves it system-first and only falls
+back to `subprojects/ncurses.wrap` when no system install is found.
 
 **Serving**
 
@@ -80,10 +81,62 @@ start the neonsignal HTTPS dev server for the current project:
 phosphor serve
 ```
 
-shows an ncurses dashboard with scrollable panels for each process (neonsignal,
-redirect, watcher). reads defaults from the `[serve]` manifest section; CLI
-flags override. use `--no-dashboard` for raw output. requires `neonsignal`
-and optionally `neonsignal_redirect` on PATH.
+reads defaults from the `[serve]`, `[deploy]`, and `[certs]` manifest
+sections; CLI flags override:
+
+- `www-root` is derived from `[deploy].public_dir` (relative values are
+  anchored under `--project`)
+- `certs-root` is derived from the `[certs]` section
+- the watcher command defaults to a build-on-change helper; override with
+  a `[serve].watch_cmd` manifest entry or `--watch-cmd`
+- `neonsignal` (required) and `neonsignal_redirect` (optional) are
+  preflight-checked against PATH before any child is spawned
+- use `--no-dashboard` for raw line-buffered output
+- the dashboard skips clean when the manifest lacks enough data to serve
+
+if any authoritative child (neonsignal, or the redirect when enabled)
+exits, the remaining siblings are torn down and `phosphor serve` exits
+with the worst observed exit code.
+
+**Dashboard**
+
+the default ncurses dashboard is far richer than a scrollable log view:
+
+- multi-panel process view (neonsignal, redirect, watcher) with
+  per-panel tabbed streams
+- in-panel regex search
+- zoom / fullscreen single-panel mode
+- start/stop lifecycle controls for any tracked child
+- popup help, about, and command reference
+- embedded PTY shell with multiple views and screens
+- JSON log save/export, plus a fuzzy JSON log picker and line search
+- JSON folding and a JSON viewer popup
+- dashboard fuzzy search honors `.gitignore` merged with
+  `[fuzzy].exclude` from the manifest
+
+**Building Cathode JSX projects**
+
+```bash
+phosphor build
+```
+
+drives esbuild to bundle a Cathode JSX project and deploys the output to
+a `public/` tree. key behaviors:
+
+- auto-runs `npm install` when `node_modules/.bin/esbuild` is missing
+- reads `[build].entry` and `[build].defines` from the manifest
+- deploy path is resolved through a 4-tier chain:
+  1. `--deploy-at=<path>`
+  2. `[deploy].public_dir`
+  3. first `[[certs.domains]]` name
+  4. env-derived fallback `public/<SNI><TLD>`
+- copies `src/static/` into the build output
+- `--toml` emits a machine-readable TOML build report
+- `--clean-first` wipes the deploy target before rebuilding
+- deploy targets are checked for containment under the project root
+  before any writes happen
+- a deprecated legacy shell-script fallback is available only when
+  phosphor is compiled with `-Dscript_fallback=true`
 
 **Testing**
 
@@ -110,20 +163,35 @@ phosphor create --name=my-project --template=./template.tar.gz \
 
 **TLS certificates**
 
-generate local development certificates (self-signed CA):
+generate a local development CA and leaf certificates:
 
 ```bash
-phosphor certs --local
+phosphor certs --generate
+phosphor certs --generate --ca-only         # CA only, skip leaves
+phosphor certs --generate --domain=mysite    # only generate for one domain
 ```
 
-request production certificates via Let's Encrypt ACME HTTP-01:
+drive the Let's Encrypt ACME HTTP-01 pipeline:
 
 ```bash
-phosphor certs --letsencrypt --domain=mysite.com
+phosphor certs --letsencrypt --action=request              # request a new certificate
+phosphor certs --letsencrypt --action=renew                # renew existing certs
+phosphor certs --letsencrypt --action=verify               # verify without issuing
+phosphor certs --letsencrypt --action=request --staging    # hit the LE staging endpoint
+phosphor certs --letsencrypt --action=request --domain=mysite.com
 ```
 
-certificate configuration lives in `[certs]` and `[[certs.domains]]` sections
-of `template.phosphor.toml`.
+additional flags:
+
+- `--output=<path>` overrides the default cert output tree
+- `--project=<path>` lets you run certs from outside the project root
+- ACME account keys are managed automatically under `~/.phosphor/acme/`
+  (one key per account) and reused across runs
+
+certificate configuration lives in `[certs]` and `[[certs.domains]]`
+sections of `template.phosphor.toml`. All cert-related paths
+(`dir_name`, `webroot`, `output_dir`, `account_key`) are validated
+against the project root and cannot escape it.
 
 **Dependencies**
 
@@ -132,11 +200,13 @@ core (no external libraries):
 - POSIX.1-2008 APIs
 
 vendored (built automatically, fetched by meson wrap):
-- `toml-c` v1.0.0 -- TOML manifest parsing (always required)
-- `libgit2` v1.9.2 -- remote git template fetching (`-Dlibgit2=true`, default on)
-- `libarchive` v3.8.5 -- archive template support (`-Dlibarchive=true`, default on)
-- `PCRE2` v10.45 -- regex filters in template manifests (`-Dpcre2=true`, default on)
-- `libcurl` -- ACME HTTP-01 certificate requests (`-Dlibcurl=true`, default on)
+- `toml-c` v1.0.0 -- TOML manifest parsing
+- `libgit2` v1.9.2 -- remote git template fetching
+- `libarchive` v3.8.5 -- archive template support
+- `PCRE2` v10.45 -- regex filters in template manifests
+- `cJSON` v1.7.18 -- JSON for ACME + dashboard export
+- `libcurl` -- ACME HTTP-01 certificate requests
+- `ncurses` v6.5 -- serve dashboard TUI (system-first, wrap fallback)
 
 runtime (optional, for `phosphor serve`):
 - `neonsignal` -- HTTPS server binary (on PATH)

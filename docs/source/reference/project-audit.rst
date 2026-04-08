@@ -2,7 +2,7 @@
    :title: phosphor project audit
    :tags: #neonsignal, #phosphor
    :status: active
-   :updated: 2026-03-20
+   :updated: 2026-04-07
 
 .. index::
    single: audit
@@ -10,7 +10,7 @@
    single: project health
    pair: audit; codebase
 
-phosphor -- project audit (2026-03-20)
+phosphor -- project audit (2026-04-07)
 =======================================
 
 executive summary
@@ -25,7 +25,7 @@ project diagnostics.
    :widths: 25 75
 
    * - version
-     - ``0.0.1-021``
+     - ``0.0.2-024``
    * - language
      - C17 (``-std=c17 -pedantic -Wall -Wextra``)
    * - build system
@@ -39,9 +39,11 @@ project diagnostics.
    * - headers
      - 1,926 lines across 26 ``.h`` files
    * - unit tests
-     - 531 tests across 38 test files
+     - 0 active -- Ceedling 1.0.1 removed, awaiting replacement framework.
+       prior suite (38 files, 531 tests) archived under
+       ``docs/source/reference/tests/``
    * - integration tests
-     - 2 shell scripts (12 test cases)
+     - 0 active -- archived with unit tests
 
 **maturity**: solid pre-1.0 codebase. core infrastructure (memory, parsing,
 template engine, I/O, process management) is well-tested and production-quality.
@@ -247,9 +249,13 @@ test coverage
 unit tests
 ^^^^^^^^^^
 
-531 tests across 38 test files via Ceedling 1.0.1 (Unity + CMock + CException).
+the Ceedling 1.0.1 suite (531 tests across 38 files) was removed pending a
+replacement framework. the archived source lives under
+``docs/source/reference/tests/`` with setup docs in
+``docs/source/reference/ceedling-test-framework.[SKIP-STALE].rst``.
 
-top 15 most heavily tested modules:
+for historical reference, the archived suite's top 15 most-tested modules
+were:
 
 .. list-table::
    :header-rows: 1
@@ -372,7 +378,8 @@ staging and production endpoints but lacks automated regression coverage.
 CI/CD pipeline
 --------------
 
-5-job GitHub Actions workflow:
+3-job GitHub Actions workflow (the former ``unit-tests`` and ``integration``
+jobs were removed alongside the Ceedling suite):
 
 .. list-table::
    :header-rows: 1
@@ -384,13 +391,6 @@ CI/CD pipeline
    * - ``build``
      - macOS + Ubuntu
      - Meson setup, Ninja compile, smoke test (``phosphor version``)
-   * - ``unit-tests``
-     - Ubuntu
-     - Ceedling ``test:all`` (531 tests). includes PCRE2 static link
-       workaround (thin archive repack + ``--whole-archive``)
-   * - ``integration``
-     - macOS
-     - ``test_create_golden.sh``, ``test_glow_golden.sh``
    * - ``release-build``
      - 3 targets
      - macos-arm64, linux-x86_64, linux-arm64. release ``-O2``
@@ -402,9 +402,10 @@ CI/CD pipeline
        uploads tarballs + checksums as release artifacts.
        triggered on ``refs/tags/v*``
 
-**test distribution**: unit tests run on Linux (Ubuntu), integration tests
-run on macOS (where primary development happens). cross-platform compilation
-verified on both.
+**coverage gap**: with Ceedling removed, CI no longer exercises unit or
+integration tests. only compilation and the ``version`` smoke test run.
+a replacement framework is required before this audit can report active
+test coverage.
 
 
 dependency audit
@@ -506,23 +507,23 @@ configuration consistency
      - status
    * - ``meson.build``
      - ``phosphor_version``
-     - ``0.0.1-021``
+     - ``0.0.2-024``
      - authoritative source
    * - ``meson.build``
      - ``project(version)``
-     - ``0.0.1``
+     - ``0.0.2``
      - OK (no build suffix per Meson convention)
    * - ``docs/source/conf.py``
      - ``release``
-     - ``0.0.1-021``
+     - ``0.0.2-024``
      - in sync
    * - ``project.yml``
      - compile flags
-     - ``0.0.1-021``
-     - in sync
+     - ``0.0.2-024``
+     - archived with tests (may lag)
    * - ``justfile``
      - ``VERSION``
-     - ``0.0.1-021``
+     - ``0.0.2-024``
      - in sync
 
 **verdict**: all 5 version locations are synchronized. no drift detected.
@@ -724,7 +725,7 @@ appendix: file inventory
        +-- acme_json.h                           25 lines  (convention violation)
 
    include/phosphor/                            26 headers
-   tests/unit/                                  38 test files, 531 tests
-   tests/integration/                           2 scripts, 12 test cases
+   docs/source/reference/tests/                 archived Ceedling suite
+                                                  (38 files, 531 tests, 2 integration scripts)
    templates/cathode-landing/                   42 template files
-   subprojects/                                 5 vendored dependencies
+   subprojects/                                 7 vendored dependencies
