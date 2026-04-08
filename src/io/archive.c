@@ -10,9 +10,15 @@
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
 #include <sys/stat.h>
+
+/* mkdtemp is POSIX but not exposed under strict c17 + _POSIX_C_SOURCE=200809L
+ * on all platforms; provide an explicit declaration (same pattern as
+ * src/commands/glow_cmd.c). */
+extern char *mkdtemp(char *tmpl);
 
 #ifdef PHOSPHOR_HAS_LIBARCHIVE
 #include <archive.h>
@@ -160,16 +166,15 @@ ph_result_t ph_archive_extract(const char *archive_path,
         ph_log_info("archive: checksum verified");
     }
 
-    /* step 2: create temporary extraction directory */
-    char extract_dir[256];
-    snprintf(extract_dir, sizeof(extract_dir),
-             "/tmp/" EXTRACT_PREFIX "%d-%lld",
-             (int)getpid(), (long long)time(NULL));
-
-    if (ph_fs_mkdir_p(extract_dir, 0755) != PH_OK) {
+    /* step 2: create temporary extraction directory via mkdtemp.
+     * audit fix: the previous snprintf of pid+time was predictable and a
+     * local attacker could pre-create the path with a symlink. mkdtemp atomically
+     * creates a unique 0700 directory that cannot be pre-empted. */
+    char extract_dir[] = "/tmp/" EXTRACT_PREFIX "XXXXXX";
+    if (mkdtemp(extract_dir) == NULL) {
         if (err)
             *err = ph_error_createf(PH_ERR_FS, 0,
-                "cannot create extraction directory: %s", extract_dir);
+                "cannot create extraction directory via mkdtemp");
         return PH_ERR;
     }
 
@@ -280,16 +285,29 @@ ph_result_t ph_archive_extract(const char *archive_path,
         ph_free(dest);
     }
 
-    archive_read_free(ar);
-
+    /* audit fix: capture libarchive's error string BEFORE freeing the
+     * handle. the previous code called archive_error_string(ar) after
+     * archive_read_free(ar), which is a use-after-free in the error
+     * reporting path for malformed archives. */
     if (rc != ARCHIVE_EOF) {
+        const char *libarchive_err = archive_error_string(ar);
+        char *err_copy = NULL;
+        if (libarchive_err) {
+            size_t elen = strlen(libarchive_err);
+            err_copy = ph_alloc(elen + 1);
+            if (err_copy) memcpy(err_copy, libarchive_err, elen + 1);
+        }
+        archive_read_free(ar);
         if (err)
             *err = ph_error_createf(PH_ERR_CONFIG, 0,
                 "archive read error: %s (%s)",
-                archive_path, archive_error_string(ar));
+                archive_path, err_copy ? err_copy : "unknown");
+        ph_free(err_copy);
         ph_archive_cleanup_extract(extract_dir, NULL);
         return PH_ERR;
     }
+
+    archive_read_free(ar);
 
     /* step 5: transfer ownership of extract path to caller */
     size_t dir_len = strlen(extract_dir);

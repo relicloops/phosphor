@@ -8,8 +8,13 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+
+/* mkdtemp is POSIX but not exposed under strict c17 + _POSIX_C_SOURCE=200809L
+ * on all platforms; provide an explicit declaration. */
+extern char *mkdtemp(char *tmpl);
 
 #ifdef PHOSPHOR_HAS_LIBGIT2
 #include <git2.h>
@@ -21,8 +26,7 @@
 
 bool ph_git_is_url(const char *s) {
     if (!s) return false;
-    return strncmp(s, "http://", 7) == 0 ||
-           strncmp(s, "https://", 8) == 0;
+    return strncmp(s, "https://", 8) == 0;
 }
 
 ph_result_t ph_git_url_parse(const char *input, ph_git_url_t *out,
@@ -37,12 +41,18 @@ ph_result_t ph_git_url_parse(const char *input, ph_git_url_t *out,
     memset(out, 0, sizeof(*out));
 
     /* validate scheme */
-    if (strncmp(input, "https://", 8) != 0 &&
-        strncmp(input, "http://", 7) != 0) {
-        if (err)
-            *err = ph_error_createf(PH_ERR_CONFIG, 0,
-                "invalid git URL scheme: %s (expected http:// or https://)",
-                input);
+    if (strncmp(input, "https://", 8) != 0) {
+        if (err) {
+            if (strncmp(input, "http://", 7) == 0) {
+                *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                    "insecure http:// git URLs are rejected. "
+                    "use https:// instead: %s", input);
+            } else {
+                *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                    "invalid git URL scheme: %s "
+                    "(expected https://)", input);
+            }
+        }
         return PH_ERR;
     }
 
@@ -206,16 +216,16 @@ ph_result_t ph_git_fetch_template(const ph_git_url_t *parsed,
     if (ensure_git2_init(err) != PH_OK)
         return PH_ERR;
 
-    /* build temporary clone directory */
-    char clone_dir[256];
-    snprintf(clone_dir, sizeof(clone_dir),
-             "/tmp/" CLONE_PREFIX "%d-%lld",
-             (int)getpid(), (long long)time(NULL));
-
-    if (ph_fs_mkdir_p(clone_dir, 0755) != PH_OK) {
+    /* build temporary clone directory via mkdtemp.
+     * audit fix: the previous pid+time template was predictable and a local
+     * attacker could pre-create the path with a symlink. mkdtemp atomically
+     * creates a unique 0700 directory. libgit2's git_clone accepts an empty
+     * pre-existing directory so this drop-in works as before. */
+    char clone_dir[] = "/tmp/" CLONE_PREFIX "XXXXXX";
+    if (mkdtemp(clone_dir) == NULL) {
         if (err)
             *err = ph_error_createf(PH_ERR_FS, 0,
-                "cannot create clone directory: %s", clone_dir);
+                "cannot create clone directory via mkdtemp");
         return PH_ERR;
     }
 
