@@ -48,14 +48,64 @@ char *ph_acme_base64url_encode(const uint8_t *data, size_t len) {
 #include "phosphor/fs.h"
 #include "phosphor/path.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* ---- base64url encode a string ---- */
 
 static char *base64url_encode_str(const char *str) {
     return ph_acme_base64url_encode((const uint8_t *)str, strlen(str));
+}
+
+/*
+ * exec_to_file -- run a child process with stdout redirected to a file.
+ *
+ * argv is a NULL-terminated argv array for execvp. stdout_path is opened
+ * with O_WRONLY|O_CREAT|O_TRUNC (0600). stderr is redirected to /dev/null
+ * to suppress noise on expected failures (matches the old 2>/dev/null).
+ *
+ * returns PH_OK and writes the child's exit code to *out_exit on success
+ * (child spawned and waited). returns PH_ERR on fork/open failure, or if
+ * the child was killed by a signal.
+ *
+ * this replaces `sh -c "openssl ... '<var>' > '<out>'"` which is vulnerable
+ * to shell injection via single-quoted variable contents.
+ */
+static ph_result_t exec_to_file(char *const argv[], const char *stdout_path,
+                                 int *out_exit) {
+    if (!argv || !argv[0] || !stdout_path || !out_exit) return PH_ERR;
+
+    pid_t pid = fork();
+    if (pid < 0) return PH_ERR;
+
+    if (pid == 0) {
+        /* child */
+        int fd = open(stdout_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd < 0) _exit(127);
+        if (dup2(fd, STDOUT_FILENO) < 0) _exit(127);
+        close(fd);
+
+        int null_fd = open("/dev/null", O_WRONLY);
+        if (null_fd >= 0) {
+            dup2(null_fd, STDERR_FILENO);
+            close(null_fd);
+        }
+
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+
+    /* parent */
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return PH_ERR;
+    if (WIFEXITED(status)) {
+        *out_exit = WEXITSTATUS(status);
+        return PH_OK;
+    }
+    return PH_ERR;
 }
 
 /* ---- JWS signing via openssl CLI ---- */
@@ -256,30 +306,27 @@ ph_result_t ph_acme_jwk_json(const char *key_path,
     close(modout_fd);
 
     {
+        /* audit fix: direct argv execvp via exec_to_file, no shell -- key_path
+         * can no longer inject shell metacharacters through single quotes. */
         ph_argv_builder_t b;
         if (ph_argv_init(&b, 8) != PH_OK) {
             unlink(tmp_modout);
             return PH_ERR;
         }
-        ph_argv_push(&b, "sh");
-        ph_argv_push(&b, "-c");
-        size_t cmd_len = strlen(key_path) + strlen(tmp_modout) + 128;
-        char *cmd = ph_alloc(cmd_len);
-        if (!cmd) {
-            ph_argv_destroy(&b);
+        ph_argv_push(&b, "openssl");
+        ph_argv_push(&b, "rsa");
+        ph_argv_push(&b, "-in");
+        ph_argv_push(&b, key_path);
+        ph_argv_push(&b, "-modulus");
+        ph_argv_push(&b, "-noout");
+        char **argv = ph_argv_finalize(&b);
+        if (!argv) {
             unlink(tmp_modout);
             return PH_ERR;
         }
-        snprintf(cmd, cmd_len,
-            "openssl rsa -in '%s' -modulus -noout 2>/dev/null > '%s'",
-            key_path, tmp_modout);
-        ph_argv_push(&b, cmd);
-        ph_free(cmd);
-        char **argv = ph_argv_finalize(&b);
 
-        ph_proc_opts_t opts = {.argv = argv, .cwd = NULL, .env = NULL};
         int exit_code = 0;
-        ph_proc_exec(&opts, &exit_code);
+        exec_to_file(argv, tmp_modout, &exit_code);
         ph_argv_free(argv);
     }
 
@@ -382,31 +429,27 @@ ph_result_t ph_acme_jwk_thumbprint(const char *key_path,
     close(hash_fd);
 
     {
+        /* audit fix: direct argv execvp via exec_to_file, no shell. */
         ph_argv_builder_t b;
         if (ph_argv_init(&b, 8) != PH_OK) {
             unlink(tmp_jwk);
             unlink(tmp_hash);
             return PH_ERR;
         }
-        ph_argv_push(&b, "sh");
-        ph_argv_push(&b, "-c");
-        size_t cmd_len = strlen(tmp_jwk) + strlen(tmp_hash) + 128;
-        char *cmd = ph_alloc(cmd_len);
-        if (!cmd) {
-            ph_argv_destroy(&b);
+        ph_argv_push(&b, "openssl");
+        ph_argv_push(&b, "dgst");
+        ph_argv_push(&b, "-sha256");
+        ph_argv_push(&b, "-binary");
+        ph_argv_push(&b, tmp_jwk);
+        char **argv = ph_argv_finalize(&b);
+        if (!argv) {
             unlink(tmp_jwk);
             unlink(tmp_hash);
             return PH_ERR;
         }
-        snprintf(cmd, cmd_len,
-            "openssl dgst -sha256 -binary '%s' > '%s'", tmp_jwk, tmp_hash);
-        ph_argv_push(&b, cmd);
-        ph_free(cmd);
-        char **argv = ph_argv_finalize(&b);
 
-        ph_proc_opts_t opts = {.argv = argv, .cwd = NULL, .env = NULL};
         int exit_code = 0;
-        ph_proc_exec(&opts, &exit_code);
+        exec_to_file(argv, tmp_hash, &exit_code);
         ph_argv_free(argv);
     }
 

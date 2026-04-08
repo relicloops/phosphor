@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 /* ---- finalize ---- */
@@ -233,9 +234,9 @@ ph_result_t ph_acme_finalize(const char *key_path,
         }
 
         if (attempt > 0) {
-            uint64_t start = ph_clock_monotonic_ns();
-            while (ph_clock_elapsed_ms(start, ph_clock_monotonic_ns()) < 2000.0)
-                ;
+            /* audit fix: nanosleep instead of CPU-spinning busy-wait */
+            struct timespec ts = {2, 0};
+            nanosleep(&ts, NULL);
         }
 
         char *order_body = NULL;

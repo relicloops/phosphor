@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 /*
@@ -231,8 +232,11 @@ ph_result_t ph_acme_challenge_respond(const char *key_path,
 
     /* step 6: poll authorization until status = "valid" */
     int max_polls = 30;
+    bool validated = false;
+    char *last_status = NULL;
     for (int attempt = 0; attempt < max_polls; attempt++) {
         if (ph_signal_interrupted()) {
+            ph_free(last_status);
             ph_free(token);
             ph_free(challenge_url);
             ph_free(token_path);
@@ -241,12 +245,11 @@ ph_result_t ph_acme_challenge_respond(const char *key_path,
             return PH_ERR;
         }
 
-        /* brief pause between polls */
+        /* brief pause between polls: 2 seconds via nanosleep (audit fix:
+         * replaces CPU-spinning busy-wait that pegged a core) */
         if (attempt > 0) {
-            /* simple busy wait -- 2 seconds */
-            uint64_t start = ph_clock_monotonic_ns();
-            while (ph_clock_elapsed_ms(start, ph_clock_monotonic_ns()) < 2000.0)
-                ;
+            struct timespec ts = {2, 0};
+            nanosleep(&ts, NULL);
         }
 
         char *poll_body = NULL;
@@ -260,11 +263,14 @@ ph_result_t ph_acme_challenge_respond(const char *key_path,
         ph_json_destroy(poll_json);
 
         if (status && strcmp(status, "valid") == 0) {
-            ph_free(status);
+            ph_free(last_status);
+            last_status = status;
+            validated = true;
             ph_log_info("certs: ACME authorization validated");
             break;
         }
         if (status && strcmp(status, "invalid") == 0) {
+            ph_free(last_status);
             ph_free(status);
             if (err)
                 *err = ph_error_createf(PH_ERR_PROCESS, 0,
@@ -274,7 +280,8 @@ ph_result_t ph_acme_challenge_respond(const char *key_path,
             ph_free(token_path);
             return PH_ERR;
         }
-        ph_free(status);
+        ph_free(last_status);
+        last_status = status;
 
         ph_log_debug("certs: polling authorization (attempt %d/%d)...",
                      attempt + 1, max_polls);
@@ -283,6 +290,24 @@ ph_result_t ph_acme_challenge_respond(const char *key_path,
     /* step 7: cleanup challenge token */
     unlink(token_path);
 
+    /* audit fix: the old code unconditionally returned PH_OK after the poll
+     * loop exited, so a timeout without ever seeing status="valid" was
+     * reported as success and the caller would proceed to finalize against
+     * an un-validated authorization. require validated=true. */
+    if (!validated) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_PROCESS, 0,
+                "ACME authorization polling timed out after %d attempts "
+                "(last status: %s)",
+                max_polls, last_status ? last_status : "none");
+        ph_free(last_status);
+        ph_free(token);
+        ph_free(challenge_url);
+        ph_free(token_path);
+        return PH_ERR;
+    }
+
+    ph_free(last_status);
     ph_free(token);
     ph_free(challenge_url);
     ph_free(token_path);
