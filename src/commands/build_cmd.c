@@ -119,20 +119,10 @@ static cleanup_result_t cleanup_metadata(const char *dir_path, int depth) {
 
 /* ---- deploy-at path escape guard ---- */
 
+/* audit fix: canonical containment check via ph_path_is_under. */
 static bool deploy_at_escapes_root(const char *deploy_at_abs,
                                    const char *project_root_abs) {
-    size_t root_len = strlen(project_root_abs);
-
-    /* deploy_at must start with project_root */
-    if (strncmp(deploy_at_abs, project_root_abs, root_len) != 0)
-        return true;
-
-    /* after the prefix, must be end-of-string or a '/' separator */
-    char next = deploy_at_abs[root_len];
-    if (next != '\0' && next != '/')
-        return true;
-
-    return false;
+    return !ph_path_is_under(deploy_at_abs, project_root_abs);
 }
 
 /* ---- copytree filter: skip platform metadata ---- */
@@ -462,6 +452,7 @@ int ph_cmd_build(const ph_cli_config_t *config,
             ph_free(deploy_dir);
             ph_free(build_dir);
             ph_free(src_dir);
+            if (has_manifest) ph_manifest_destroy(&manifest);
             ph_free(project_root_abs);
             return PH_ERR_VALIDATE;
         }
@@ -476,9 +467,21 @@ int ph_cmd_build(const ph_cli_config_t *config,
             deploy_dir = ph_path_normalize(joined);
             ph_free(joined);
         }
-        if (deploy_dir)
+        if (deploy_dir) {
+            /* audit fix: manifest public_dir must stay within project root */
+            if (deploy_at_escapes_root(deploy_dir, project_root_abs)) {
+                ph_log_error("build: [deploy] public_dir escapes project "
+                              "root: %s", deploy_dir);
+                ph_free(deploy_dir);
+                ph_free(build_dir);
+                ph_free(src_dir);
+                if (has_manifest) ph_manifest_destroy(&manifest);
+                ph_free(project_root_abs);
+                return PH_ERR_VALIDATE;
+            }
             ph_log_debug("build: deploy path from [deploy] public_dir: %s",
                           deploy_dir);
+        }
     }
 
     if (!deploy_dir && has_manifest) {
@@ -535,6 +538,26 @@ int ph_cmd_build(const ph_cli_config_t *config,
             ph_free(project_root_abs);
             return PH_ERR_INTERNAL;
         }
+    }
+
+    /* audit fix (2026-04-07): unified deploy_dir containment gate.
+     * Tiers 1 and 2 already had per-tier guards, but tier 3
+     * (certs.domains[0].name-derived) and tier 4 (env-derived) wrote
+     * unchecked values straight into ph_fs_rmtree below. Funnel every
+     * resolved deploy path through the same canonical containment check so
+     * a hostile manifest, a malformed cert domain, or a poisoned $SNI/$TLD
+     * cannot point deployment outside the project root and have us
+     * recursively delete it. Defense-in-depth: redundant for tiers 1+2,
+     * but cheap and uniform. */
+    if (deploy_at_escapes_root(deploy_dir, project_root_abs)) {
+        ph_log_error("build: resolved deploy directory escapes project "
+                      "root: %s", deploy_dir);
+        ph_free(deploy_dir);
+        ph_free(build_dir);
+        ph_free(src_dir);
+        if (has_manifest) ph_manifest_destroy(&manifest);
+        ph_free(project_root_abs);
+        return PH_ERR_VALIDATE;
     }
 
     /* step 5: --clean-first removes build and deploy dirs */
