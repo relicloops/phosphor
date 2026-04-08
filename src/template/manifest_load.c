@@ -294,6 +294,24 @@ static ph_result_t parse_build_config(toml_table_t *root,
     out->present = true;
     out->entry = toml_get_string(b, "entry");
 
+    /* audit fix (2026-04-08T17-06-51Z, finding 5): reject absolute or
+     * traversing build.entry at parse time. ph_cmd_build passes this
+     * manifest value straight to esbuild, which runs with cwd set to
+     * the project root -- a relative entry is safely scoped, but an
+     * absolute or "../other/src/app.tsx" entry silently bundles files
+     * outside the declared project. Match the containment policy the
+     * rest of the manifest enforces. */
+    if (out->entry) {
+        if (ph_path_is_absolute(out->entry) ||
+            ph_path_has_traversal(out->entry)) {
+            if (err)
+                *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                    "build.entry must be a relative path inside the "
+                    "project: %s", out->entry);
+            return PH_ERR;
+        }
+    }
+
     toml_array_t *arr = toml_table_array(b, "defines");
     if (!arr) { out->define_count = 0; return PH_OK; }
 
@@ -335,7 +353,8 @@ static ph_result_t parse_build_config(toml_table_t *root,
 }
 
 static ph_result_t parse_deploy_config(toml_table_t *root,
-                                        ph_deploy_config_t *out) {
+                                        ph_deploy_config_t *out,
+                                        ph_error_t **err) {
     toml_table_t *d = toml_table_table(root, "deploy");
     if (!d) {
         out->present = false;
@@ -344,6 +363,24 @@ static ph_result_t parse_deploy_config(toml_table_t *root,
 
     out->present = true;
     out->public_dir = toml_get_string(d, "public_dir");
+
+    /* audit fix (2026-04-08T17-06-51Z, finding 3): reject absolute or
+     * traversing public_dir at parse time. ph_cmd_build already refuses
+     * escaping deploy paths, but ph_cmd_serve's default watcher appended
+     * the raw value to the child argv as `--deploy <public_dir>` with no
+     * containment gate. Validating once here tightens the invariant for
+     * every downstream consumer. */
+    if (out->public_dir) {
+        if (ph_path_is_absolute(out->public_dir) ||
+            ph_path_has_traversal(out->public_dir)) {
+            if (err)
+                *err = ph_error_createf(PH_ERR_CONFIG, 0,
+                    "deploy.public_dir must be a relative path inside "
+                    "the project: %s", out->public_dir);
+            return PH_ERR;
+        }
+    }
+
     return PH_OK;
 }
 
@@ -626,7 +663,7 @@ ph_result_t ph_manifest_load(const char *path, ph_manifest_t *out,
     rc = parse_build_config(root, &out->build, err);
     if (rc != PH_OK) { toml_free(root); return PH_ERR; }
 
-    rc = parse_deploy_config(root, &out->deploy);
+    rc = parse_deploy_config(root, &out->deploy, err);
     if (rc != PH_OK) { toml_free(root); return PH_ERR; }
 
     rc = parse_serve_config(root, &out->serve);
