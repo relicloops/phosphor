@@ -786,21 +786,40 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
         }
 
         case PH_OP_CHMOD: {
-            if (!op->from_abs || !op->mode) {
+            /* audit fix (2026-04-08): chmod must target the generated
+             * output tree, not the template source. The planner sets
+             * op->to_abs for ops that have a 'to' field, so prefer it
+             * and fall back to from_abs only for backward compat with
+             * manifests that set 'from' and no 'to'. Mirrors the
+             * REMOVE op dispatch below. */
+            const char *target = op->to_abs ? op->to_abs : op->from_abs;
+            if (!target || !op->mode) {
                 if (err)
                     *err = ph_error_createf(PH_ERR_CONFIG, 0,
-                        "chmod op %zu: missing 'from' or 'mode'", i);
+                        "chmod op %zu: missing target or 'mode'", i);
+                goto cleanup_err;
+            }
+
+            /* containment: the resolved target must stay under dest_dir
+             * so a manifest cannot chmod arbitrary files via a 'from'
+             * value that escapes the template tree. */
+            if (plan->dest_dir &&
+                !ph_path_is_under(target, plan->dest_dir)) {
+                if (err)
+                    *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                        "chmod op %zu: target escapes dest_dir: %s",
+                        i, target);
                 goto cleanup_err;
             }
 
             mode_t mode = (mode_t)strtol(op->mode, NULL, 8);
-            if (ph_fs_chmod(op->from_abs, mode) != PH_OK) {
+            if (ph_fs_chmod(target, mode) != PH_OK) {
                 if (err)
                     *err = ph_error_createf(PH_ERR_FS, 0,
-                        "chmod failed: %s", op->from_abs);
+                        "chmod failed: %s", target);
                 goto cleanup_err;
             }
-            ph_log_info("  chmod %s %s", op->mode, op->from_abs);
+            ph_log_info("  chmod %s %s", op->mode, target);
             break;
         }
 

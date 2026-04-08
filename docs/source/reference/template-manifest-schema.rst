@@ -381,11 +381,15 @@ Array of tables. at least one entry is required.
    * - ``from``
      - string
      - conditional
-     - Source path (required for ``copy``, ``render``, ``chmod``).
+     - Source path (required for ``copy`` and ``render``). For ``chmod``
+       accepted only as a legacy fallback when ``to`` is not set.
    * - ``to``
      - string
      - conditional
      - Destination path (required for ``copy``, ``render``, ``mkdir``).
+       For ``chmod`` this is the canonical target: the chmod applies to
+       the rendered file under the destination tree, not to the template
+       source. Prefer ``to`` over ``from`` for all chmod ops.
    * - ``mode``
      - string
      - no
