@@ -62,9 +62,9 @@ static const ph_argspec_t create_specs[] = {
  * Build command (appendix B)
  */
 static const ph_argspec_t build_specs[] = {
-    {"project", PH_TYPE_STRING, PH_FORM_VALUED, false, NULL, NULL, 0,
+    {"project", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
      "project root directory; defaults to current directory"},
-    {"deploy-at", PH_TYPE_STRING, PH_FORM_VALUED, false, NULL, NULL, 0,
+    {"deploy-at", PH_TYPE_PATH, PH_FORM_VALUED, false, NULL, NULL, 0,
      "custom deployment target directory"},
     {"clean-first", PH_TYPE_BOOL, PH_FORM_ACTION, false, NULL, NULL, 0,
      "remove build/ and deploy directories before building"},
@@ -288,7 +288,7 @@ static const ph_cmd_def_t phosphor_commands[] = {
     {"serve", PHOSPHOR_CMD_SERVE, serve_specs, ARRAY_LEN(serve_specs),
      false, "start neonsignal dev server for the project"},
     {"filament", PHOSPHOR_CMD_FILAMENT, filament_specs, ARRAY_LEN(filament_specs),
-     false, "open a file in the filament editor"},
+     false, "[experimental] open a file in the filament editor"},
     {"version", PHOSPHOR_CMD_VERSION, NULL, 0, false,
      "print phosphor version"},
     {"help", PHOSPHOR_CMD_HELP, NULL, 0, true,
