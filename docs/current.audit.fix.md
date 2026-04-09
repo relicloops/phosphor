@@ -1,109 +1,236 @@
 # Phosphor Bugs Audit
 
-Run time: `2026-04-09T05-09-51Z`
+Run time: `2026-04-09T08:08:09Z`
 
-Scope:
-- Read-only audit of `README.md`, `meson.build`, `meson.options`, `src/`, and `include/`
-- Focused on new findings not already captured in automation memory from `2026-04-09T02-08-22Z`
-- `audit-fix` skill was not available in this session, so this was a manual audit
+## Scope
 
-Repo state:
-- `main` is ahead of `origin/main` by 26 commits
-- Working tree was otherwise clean
+- Read-only audit of `README.md`, `meson.build`, `src/`, and `include/`
+- Compared README-documented behavior against the current dirty workspace
+- No build, test, or long-running commands were run
+
+## Repo state
+
+- Branch: `main` ahead of `origin/main` by 26 commits
+- Working tree was dirty in `src/`, `include/`, `docs/`, and `diagram/`
+- This report reflects the current workspace, not just `HEAD`
+
+## Summary
+
+- Several findings from earlier audits are fixed in the current tree, including `manifest.toml` probing in the main command paths, secret-variable masking, `serve` signal normalization, and the `build` define escaping work.
+- Four actionable defects remain in the current workspace: two path-containment gaps, one incomplete `manifest.toml` rollout in `doctor`, and one archive-template compatibility break.
 
 ## Findings
 
-### 1. High: legacy `clean` mode ignores `--dry-run` and `--wipe`
+### 1. High: recursive template directory ops still allow a top-level symlink escape
 
-Refs:
-- `src/commands/clean_cmd.c:94`
-- `src/commands/clean_cmd.c:165`
-- `src/commands/clean_cmd.c:178`
-- `src/commands/clean_cmd.c:234`
+Evidence:
 
-Why this matters:
-- `clean_via_scripts()` only receives `project_root_abs` and always runs `scripts/_default/clean.sh`.
-- The branch into legacy mode happens before the native implementation consumes `wipe` or `dry-run`.
-- `use_legacy_scripts()` is true either when the binary was compiled with `PHOSPHOR_SCRIPT_FALLBACK` or when the caller passes `--legacy-scripts`.
-
-Impact:
-- `phosphor clean --legacy-scripts --dry-run` can perform real deletions instead of a preview.
-- `phosphor clean --legacy-scripts --wipe` does not guarantee the documented wider delete set, because the flag never reaches the script.
-- In builds compiled with `-Dscript_fallback=true`, this broken behavior becomes the default path for every non-`--stale` clean run.
-
-### 2. High: legacy `build` mode bypasses the project-root deploy containment guard
-
-Refs:
-- `src/commands/build_cmd.c:148`
-- `src/commands/build_cmd.c:271`
-- `src/commands/build_cmd.c:344`
-- `src/commands/build_cmd.c:448`
-- `README.md:163`
-- `README.md:165`
-
-Why this matters:
-- The native build path rejects deploy targets that escape the project root.
-- The legacy branch returns before those checks run and passes `deploy_at_abs` straight to `scripts/_default/all.sh` as `--public`.
-- The runtime `--legacy-scripts` flag enables this path even though the README says the legacy fallback is only available when compiled with `-Dscript_fallback=true`.
+- Directory `copy` ops call `ph_fs_copytree(op->from_abs, op->to_abs, ..., plan->dest_dir, ...)` in `src/template/writer.c:640-643`.
+- Directory `render` ops call `rendertree_recurse(op->from_abs, op->to_abs, ...)` with `dest_dir = plan->dest_dir` in `src/template/writer.c:739-749`.
+- Both recursive walkers create the destination directory before they perform any containment re-check:
+  - `src/io/fs_copytree.c:35-42`
+  - `src/template/writer.c:290-296`
+- The new containment check only runs on `dst_child`, after that `mkdir -p` step:
+  - `src/io/fs_copytree.c:97-112`
+  - `src/template/writer.c:422-436`
+- `ph_fs_mkdir_p()` treats any existing path component as acceptable (`errno == EEXIST`) and then keeps descending, so a swapped symlinked parent is followed:
+  - `src/platform/posix/fs_posix.c:154-165`
 
 Impact:
-- `phosphor build --legacy-scripts --deploy-at=/tmp/outside` can write or clean outside the project tree.
-- This directly violates the documented guarantee that deploy targets are containment-checked before writes happen.
 
-### 3. Medium: `doctor` and `rm` treat `phosphor.toml` as a manifest even though the docs define it as project config
+- The recent containment hardening catches descendant escapes, but it still misses the first directory target itself.
+- If a same-user attacker swaps the planned top-level output directory, or one of its parent components, to a symlink after planning but before execution, `create` or `glow` can still create directories and write files outside `plan->dest_dir`.
 
-Refs:
-- `README.md:56`
-- `README.md:72`
-- `src/commands/doctor_cmd.c:29`
-- `src/commands/rm_cmd.c:66`
-- `src/commands/build_cmd.c:372`
-- `src/commands/serve_cmd.c:188`
-- `src/commands/certs_cmd.c:600`
+### 2. High: `build` still has a TOCTOU deploy escape despite the preflight containment check
 
-Why this matters:
-- The README documents `.phosphor.toml` and `phosphor.toml` as walk-up config files used for variable resolution.
-- `doctor` reports `phosphor.toml` as a valid phosphor manifest, and `rm` drops its manifest safety check if `phosphor.toml` exists.
-- The actual runtime commands that need project manifest data still only load `template.phosphor.toml`.
+Evidence:
 
-Impact:
-- A directory with only project config can pass `doctor`'s manifest check and `rm`'s safety gate.
-- The same directory will still be treated as missing manifest data by `build`, `serve`, and `certs`.
-- This creates a misleading safety model around destructive commands.
-
-### 4. Medium: `serve` prints the wrong HTTPS URL because it omits the active port
-
-Refs:
-- `src/commands/serve_cmd.c:625`
-- `src/commands/serve_cmd.c:642`
-- `src/commands/serve_cmd.c:684`
-- `src/commands/serve_cmd.c:694`
-
-Why this matters:
-- The startup URL is formatted as `https://<host>` while the actual server port is tracked separately and defaults to `9443`.
-- The same truncated URL is reused in the ncurses dashboard info panel.
+- README promises that deploy targets are checked for containment under the project root before writes happen: `README.md:163-164`.
+- `ph_cmd_build()` performs that one-time canonical check at `src/commands/build_cmd.c:601-619`.
+- After the check, the command still re-resolves the path for destructive and write operations:
+  - `ph_fs_rmtree(deploy_dir, ...)` at `src/commands/build_cmd.c:621-629` and again at `src/commands/build_cmd.c:976-985`
+  - `ph_fs_mkdir_p(deploy_dir, 0755)` at `src/commands/build_cmd.c:646-653`
+  - `ph_fs_copytree(build_dir, deploy_dir, ..., NULL, ...)` at `src/commands/build_cmd.c:983-985`
+- `ph_fs_stat()` uses `lstat(path, ...)` on the full path, which still traverses intermediate symlinked parents before it decides whether to recurse or unlink:
+  - `src/platform/posix/fs_posix.c:13-32`
+- The new `contain_root` support in `ph_fs_copytree()` is explicitly skipped here by passing `NULL`, even though the API exists for per-child containment:
+  - `include/phosphor/fs.h:51-60`
+  - `src/commands/build_cmd.c:942-944`
+  - `src/commands/build_cmd.c:983-985`
 
 Impact:
-- The banner and dashboard point users at port 443 instead of the real dev server.
-- On the default configuration, the clickable/openable URL is wrong on every run.
 
-### 5. Medium: recursive directory writes still follow symlinks during copy/render walks
+- A post-check symlink swap can still redirect `--clean-first`, the final deploy wipe, or the deploy copy outside the project root.
+- In the worst case, `phosphor build` can recursively delete or repopulate an arbitrary same-user directory even though the documented containment gate already passed.
 
-Refs:
-- `src/io/fs_copytree.c:107`
-- `src/template/writer.c:419`
-- `src/platform/posix/fs_posix.c:81`
+### 3. Medium: `doctor` still skips certificate diagnostics for `manifest.toml` projects
 
-Why this matters:
-- `ph_fs_copytree()` and `rendertree_recurse()` both write descendants through `ph_fs_write_file()`.
-- `ph_fs_write_file()` opens with `O_WRONLY | O_CREAT | O_TRUNC`, so it follows symlinks.
-- Single-file template ops gained execute-time containment re-checks, but recursive descendant writes did not.
+Evidence:
+
+- README documents both `template.phosphor.toml` and `manifest.toml` as supported manifest filenames: `README.md:193-210`.
+- `doctor`'s manifest presence check now uses `ph_manifest_find()` and correctly accepts either filename: `src/commands/doctor_cmd.c:33-44`.
+- But the cert subcheck still hardcodes `template.phosphor.toml`:
+  - `src/commands/doctor_cmd.c:189-207`
 
 Impact:
-- A concurrent symlink swap inside a deploy or staging tree can redirect writes outside the intended root.
-- This is harder to exploit than the legacy build/clean issues because it needs local filesystem races, but it is still a real write-escape surface.
 
-## Notes
+- A project that uses the documented alternate filename can get `[ok] manifest: manifest.toml found`, but `doctor` will silently skip all cert expiry and presence checks.
+- That makes `doctor` internally inconsistent and weakens its value for exactly the projects the README says are supported.
 
-- I did not repeat earlier memory findings about the documented `[variables]` config format, `manifest.toml` support, `ph_serve_wait()` signal mapping, unescaped esbuild define injection, or `doctor`'s global `esbuild` check.
-- No repository source files were modified during this run. Only this audit report and automation memory were updated.
+### 4. Medium: archive wrapper descent still breaks on common metadata sidecars
+
+Evidence:
+
+- README advertises archive templates as a supported source type: `README.md:176-182`.
+- `create` only descends into an extracted wrapper directory when there is exactly one visible non-hidden child at the archive root:
+  - `src/commands/create_cmd.c:278-319`
+- That loop ignores only dot-prefixed names. It does not ignore other metadata sidecars such as `Thumbs.db`, `desktop.ini`, or `__MACOSX`.
+- The project already has a metadata deny list for these kinds of artifacts, but the wrapper detection path does not use it:
+  - `src/io/metadata_filter.c:6-18`
+- Archive extraction preserves regular files and directories as-is, so those sidecars survive into the extracted root:
+  - `src/io/archive.c:230-282`
+
+Impact:
+
+- A common wrapped archive that contains `project-name/` plus `__MACOSX/`, `Thumbs.db`, or similar metadata fails the "exactly one child" test, so `create` reports "no manifest found" even though the template itself is valid.
+- This keeps archive-template support narrower than the README implies, especially for user-generated zip files.
+
+## Recommended order
+
+1. Re-check the top-level recursive destination before any `mkdir -p` in the template walkers, not just the descendants.
+2. Harden `build`'s deploy path against post-validation symlink swaps, including the delete path, and stop opting out of `contain_root` where the destination is security-sensitive.
+3. Switch `doctor`'s cert inspection over to `ph_manifest_find()`.
+4. Make archive wrapper descent ignore metadata sidecars the same way the rest of the filesystem pipeline does.
+
+## Verification limits
+
+- Static analysis only.
+- No compile, smoke, or docs-build commands were run because the repository instructions require asking before long-running work.
+
+
+---
+
+# Phosphor Bugs Audit
+
+Run time: `2026-04-09T09:09:58Z`
+
+## Scope
+
+- Read-only audit of `README.md`, `meson.build`, `meson.options`, `src/`, and `include/`
+- Compared README-documented behavior against the current command implementations and Meson compile graph
+- No build, test, or long-running commands were run
+
+## Repo state
+
+- Branch: `main`
+- Working tree was dirty in `docs/`, `include/`, and `src/`, with untracked content under `diagram/`
+- This report reflects the current workspace, not just `HEAD`
+
+## Summary
+
+- The current tree still carries four previously reported defects that materially affect safety or documented behavior: two path-containment gaps, one `manifest.toml` diagnostic gap, and one archive-template compatibility break.
+- One additional command-surface mismatch remains in the current workspace: `certs --force` is advertised by the CLI but ignored for Let's Encrypt flows, so existing ACME key/cert material can be overwritten without the documented opt-in.
+- README also lags the actual build graph in one important place: Meson now requires `python3` for embedded template code generation during normal builds.
+
+## Findings
+
+### 1. High: recursive template directory ops still allow a top-level symlink escape
+
+Evidence:
+
+- Directory `copy` ops call `ph_fs_copytree(op->from_abs, op->to_abs, ..., plan->dest_dir, ...)` in `src/template/writer.c:640-643`.
+- Directory `render` ops call `rendertree_recurse(op->from_abs, op->to_abs, ...)` with `dest_dir = plan->dest_dir` in `src/template/writer.c:739-749`.
+- Both recursive walkers create the destination directory before they perform any containment re-check:
+  - `src/io/fs_copytree.c:35-42`
+  - `src/template/writer.c:290-296`
+- The newer containment checks only run on descendants like `dst_child`, not on the top-level `dst` itself:
+  - `src/io/fs_copytree.c:97-112`
+  - `src/template/writer.c:422-436`
+- `ph_fs_mkdir_p()` still accepts `EEXIST` and continues descending through path components, so a swapped symlinked parent is followed:
+  - `src/platform/posix/fs_posix.c:154-165`
+
+Impact:
+
+- The recent hardening catches descendant escapes, but it still misses the first directory target itself.
+- If a same-user attacker swaps the planned top-level output directory, or one of its parent components, to a symlink after planning but before execution, `create` or `glow` can still create directories and write files outside `plan->dest_dir`.
+
+### 2. High: `build` still has a TOCTOU deploy escape despite the documented containment guard
+
+Evidence:
+
+- README promises that deploy targets are checked for containment under the project root before writes happen: `README.md:163-164`.
+- `ph_cmd_build()` performs that one-time canonical check at `src/commands/build_cmd.c:601-619`.
+- After the check, the command still reuses the raw path for destructive and write operations:
+  - `ph_fs_rmtree(deploy_dir, ...)` at `src/commands/build_cmd.c:621-629` and `src/commands/build_cmd.c:976-980`
+  - `ph_fs_mkdir_p(deploy_dir, 0755)` at `src/commands/build_cmd.c:646-653`
+  - `ph_fs_copytree(build_dir, deploy_dir, ..., NULL, ...)` at `src/commands/build_cmd.c:983-985`
+- The deploy copy still opts out of `ph_fs_copytree()`'s per-child containment support by passing `NULL` for `contain_root`: `src/commands/build_cmd.c:983-985`.
+
+Impact:
+
+- A post-check symlink swap can still redirect `--clean-first`, the final deploy wipe, or the deploy copy outside the project root.
+- In the worst case, `phosphor build` can recursively delete or repopulate an arbitrary same-user directory even though the documented containment gate already passed.
+
+### 3. Medium: `doctor` still skips certificate diagnostics for `manifest.toml` projects
+
+Evidence:
+
+- README documents both `template.phosphor.toml` and `manifest.toml` as supported manifest filenames: `README.md:193-208`.
+- `doctor`'s manifest presence check correctly uses `ph_manifest_find()` and therefore accepts either file name: `src/commands/doctor_cmd.c:33-44`.
+- But the cert subcheck still hardcodes `template.phosphor.toml`:
+  - `src/commands/doctor_cmd.c:189-207`
+
+Impact:
+
+- A project that uses the documented alternate filename can get `[ok] manifest: manifest.toml found`, but `doctor` will silently skip all cert expiry and presence checks.
+- That makes `doctor` internally inconsistent and weakens it for exactly the projects the README says are supported.
+
+### 4. Medium: archive wrapper descent still breaks on common metadata sidecars
+
+Evidence:
+
+- README advertises archive templates as a supported source type: `README.md:176-182`.
+- `create` only descends into an extracted wrapper directory when there is exactly one visible non-hidden child at the archive root: `src/commands/create_cmd.c:278-321`.
+- That loop ignores only dot-prefixed names. It does not ignore common sidecars like `Thumbs.db`, `desktop.ini`, or wrapper directories such as `__MACOSX`.
+- The project already filters some metadata files elsewhere, but that filter is not reused here:
+  - `src/io/metadata_filter.c:6-33`
+
+Impact:
+
+- A wrapped archive that contains `project-name/` plus a metadata sidecar fails the "exactly one child" test, so `create` reports "no manifest found" even though the template itself is valid.
+- This keeps archive-template support narrower than the README implies, especially for user-generated zip files.
+
+### 5. Medium: `certs --force` is ignored for Let's Encrypt flows
+
+Evidence:
+
+- The certs command spec advertises `--force` as "overwrite existing cert files": `src/commands/phosphor_commands.c:152-153`.
+- The Let's Encrypt pipeline receives the flag but immediately discards it with `(void)force`: `src/commands/certs_cmd.c:75-87`.
+- The ACME finalize path then unconditionally regenerates the private key and writes the certificate output:
+  - `openssl genrsa -out <privkey_path>` in `src/certs/acme_finalize.c:41-63`
+  - `ph_io_write_file(cert_path, ...)` in `src/certs/acme_finalize.c:288-293`
+
+Impact:
+
+- `phosphor certs --letsencrypt ...` and `phosphor certs --generate` for LE domains can overwrite existing ACME key/cert material even when the user did not pass `--force`.
+- That is inconsistent with the advertised CLI behavior and with the local CA / local leaf paths, which do honor overwrite gating.
+
+## Notable docs drift
+
+- README's build prerequisites omit `python3`, but the top-level Meson build always calls `find_program('python3')` and uses it for embedded template codegen: `meson.build:311-333`, `README.md:85-90`.
+- README says "phosphor supports three template source types" but then lists four (`local`, `remote git`, `archive file`, `embedded`): `README.md:176-180`.
+- The current tree contains public/source files not reflected in the repository structure snapshot, including `src/args-parser/args_helpers.c`, `src/template/embedded_registry.c`, `src/core/color.c`, `src/core/term.c`, `include/phosphor/certs.h`, and `include/phosphor/embedded.h`.
+
+## Recommended order
+
+1. Re-check the top-level recursive destination before any `mkdir -p` in the template walkers, not just descendants.
+2. Harden `build`'s deploy path against post-validation symlink swaps, including delete and deploy-copy paths.
+3. Switch `doctor`'s cert inspection over to `ph_manifest_find()`.
+4. Make archive wrapper descent reuse metadata filtering or explicitly ignore common archive sidecars.
+5. Either honor `--force` in the Let's Encrypt path or reject it there until overwrite behavior is implemented.
+6. Update README's build prerequisites and template-source wording to match the current Meson graph and command surface.
+
+## Verification limits
+
+- Static analysis only.
+- No compile, smoke, or docs-build commands were run because the repository instructions require asking before long-running work.
