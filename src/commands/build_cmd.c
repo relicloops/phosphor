@@ -974,6 +974,22 @@ int ph_cmd_build(const ph_cli_config_t *config,
         ph_log_debug("build: deploying %s -> %s", build_dir, deploy_dir);
 
     {
+        /* audit fix (finding 2): re-check deploy_dir containment
+         * right before the destructive wipe + copy sequence.  A
+         * same-user symlink swap between the original escape check
+         * and this point can redirect the deploy outside the project
+         * root. */
+        if (deploy_at_escapes_root(deploy_dir, project_root_abs)) {
+            ph_log_error("build: deploy directory escaped project root "
+                          "between check and deploy: %s", deploy_dir);
+            ph_free(deploy_dir);
+            ph_free(build_dir);
+            ph_free(src_dir);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_VALIDATE;
+        }
+
         /* clear deploy dir for deterministic sync (like rsync --delete) */
         ph_error_t *err = NULL;
         ph_fs_rmtree(deploy_dir, &err);
@@ -982,7 +998,7 @@ int ph_cmd_build(const ph_cli_config_t *config,
 
         if (ph_fs_copytree(build_dir, deploy_dir,
                            metadata_skip_filter, NULL,
-                           NULL, &err) != PH_OK) {
+                           project_root_abs, &err) != PH_OK) {
             ph_log_error("build: failed to deploy: %s",
                           err ? err->message : "unknown");
             ph_error_destroy(err);
