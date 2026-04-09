@@ -18,6 +18,9 @@ typedef struct {
     char          *name;
     char          *value;
     ph_var_type_t  type;
+    bool           secret;  /* audit fix (finding 8): carry forward
+                             * so consumers can mask without re-looking
+                             * up the definition. */
 } ph_resolved_var_t;
 
 /* ---- variable merge context ---- */

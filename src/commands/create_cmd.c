@@ -359,8 +359,14 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
   }
 
   ph_log_debug("create: variable merge complete (%zu variables)", var_count);
-  for (size_t i = 0; i < var_count; i++)
-    ph_log_debug("create:   %s = %s", vars[i].name, vars[i].value);
+  /* audit fix (finding 8): mask secret variables and guard against
+   * NULL values (passing NULL to %s is undefined). */
+  for (size_t i = 0; i < var_count; i++) {
+    const char *shown = vars[i].secret
+        ? "[secret]"
+        : (vars[i].value ? vars[i].value : "(null)");
+    ph_log_debug("create:   %s = %s", vars[i].name, shown);
+  }
 
   if (ph_signal_interrupted()) {
     ph_resolved_vars_destroy(vars, var_count);

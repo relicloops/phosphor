@@ -141,8 +141,9 @@ ph_result_t ph_var_merge(const ph_var_merge_ctx_t *ctx,
 
     for (size_t i = 0; i < count; i++) {
         const ph_var_def_t *def = &ctx->manifest->variables[i];
-        vars[i].name = dup_str(def->name);
-        vars[i].type = def->type;
+        vars[i].name   = dup_str(def->name);
+        vars[i].type   = def->type;
+        vars[i].secret = def->secret;
 
         const char *value = NULL;
 
