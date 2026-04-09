@@ -389,13 +389,13 @@ int ph_cmd_serve(const ph_cli_config_t *config,
     }
 
     /* neonsignal logging flags -- tier 1 (flag) > tier 2 (manifest) */
-    cfg.ns.enable_debug = ph_args_has_flag(args, "enable-debug")
+    cfg.ns.enable_debug = ph_args_is_enabled(args, "debug")
                         || (ms && ms->ns_enable_debug);
-    cfg.ns.enable_log = ph_args_has_flag(args, "enable-log")
+    cfg.ns.enable_log = ph_args_is_enabled(args, "log")
                       || (ms && ms->ns_enable_log);
-    cfg.ns.enable_log_color = ph_args_has_flag(args, "enable-log-color")
+    cfg.ns.enable_log_color = ph_args_is_enabled(args, "log-color")
                             || (ms && ms->ns_enable_log_color);
-    cfg.ns.enable_file_log = ph_args_has_flag(args, "enable-file-log")
+    cfg.ns.enable_file_log = ph_args_is_enabled(args, "file-log")
                            || (ms && ms->ns_enable_file_log);
     /* audit fix: log_directory is mkdir'd directly by phosphor BEFORE any
      * child chdir, so a relative value resolved against the caller cwd
@@ -407,7 +407,7 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         cfg.ns.log_directory = derived.ns_log_directory
                              ? derived.ns_log_directory : raw;
     }
-    cfg.ns.disable_proxies_check = ph_args_has_flag(args, "disable-proxies-check")
+    cfg.ns.disable_proxies_check = ph_args_is_disabled(args, "proxies-check")
                                  || (ms && ms->ns_disable_proxies_check);
 
     /* watch config -- tier 1 (flag) > tier 2 (manifest [serve]) */
@@ -558,7 +558,7 @@ int ph_cmd_serve(const ph_cli_config_t *config,
      * mkdir() and discarded every return value, so a nested
      * log_directory like "var/log/phosphor" silently failed when
      * "var/log" did not already exist -- neonsignal would then spawn
-     * with --enable-file-log configured but no log tree. Switch to
+     * with --enable-file-log (file-log toggle) configured but no log tree. Switch to
      * recursive ph_fs_mkdir_p and fail-closed so users get a clear
      * diagnostic instead of a broken file-log configuration.
      *

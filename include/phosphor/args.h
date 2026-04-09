@@ -216,6 +216,8 @@ ph_result_t ph_validate(const ph_cli_config_t *config,
 
 const char *ph_args_get_flag(const ph_parsed_args_t *args, const char *name);
 bool ph_args_has_flag(const ph_parsed_args_t *args, const char *name);
+bool ph_args_is_enabled(const ph_parsed_args_t *args, const char *name);
+bool ph_args_is_disabled(const ph_parsed_args_t *args, const char *name);
 
 /* ---- diagnostic subcodes (usage error category) ---- */
 
