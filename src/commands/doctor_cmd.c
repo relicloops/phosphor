@@ -187,15 +187,11 @@ static void check_cert_file(const char *cert_path, const char *label) {
 }
 
 static void check_certs(const char *project_root) {
-    /* try loading certs config -- only if manifest file exists */
-    char *toml_path = ph_path_join(project_root, "template.phosphor.toml");
+    /* audit fix (finding 3): use ph_manifest_find instead of
+     * hardcoding template.phosphor.toml so projects using the
+     * documented manifest.toml alternate get cert diagnostics. */
+    char *toml_path = ph_manifest_find(project_root);
     if (!toml_path) return;
-
-    ph_fs_stat_t toml_st;
-    if (ph_fs_stat(toml_path, &toml_st) != PH_OK || !toml_st.is_file) {
-        ph_free(toml_path);
-        return;
-    }
 
     ph_error_t *err = NULL;
     ph_certs_config_t cfg;
