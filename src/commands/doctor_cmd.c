@@ -311,7 +311,26 @@ int ph_cmd_doctor(const ph_cli_config_t *config,
      * actually reflects missing required tools instead of printing
      * "all checks passed" when only openssl was present. */
     warnings += check_tool("openssl");
-    warnings += check_tool("esbuild");
+    /* audit fix (finding 11): esbuild is project-local (installed via
+     * npm install) and auto-provisioned by `phosphor build`.  Check
+     * node_modules/.bin/esbuild first before falling back to the
+     * global PATH check. */
+    {
+        char *local_esbuild = ph_path_join(project_root_abs,
+                                            "node_modules/.bin/esbuild");
+        ph_fs_stat_t ebs;
+        if (local_esbuild &&
+            ph_fs_stat(local_esbuild, &ebs) == PH_OK && ebs.is_file) {
+            ph_log_info("%s esbuild: project-local found", S_OK);
+        } else {
+            int erc = check_tool("esbuild");
+            if (erc != 0)
+                ph_log_info("  (optional: `phosphor build` runs "
+                             "npm install automatically)");
+            warnings += erc;
+        }
+        ph_free(local_esbuild);
+    }
     warnings += check_tool("neonsignal");
     warnings += check_tool("neonsignal_redirect");
 
