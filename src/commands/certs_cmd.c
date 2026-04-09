@@ -84,8 +84,6 @@ static int run_letsencrypt(const ph_certs_config_t *config,
     ph_log_error("Let's Encrypt ACME is not available in this build");
     return PH_ERR_CONFIG;
 #else
-    (void)force;
-
     if (!action) action = "request";
 
     /* resolve account key path.
@@ -395,6 +393,32 @@ static int run_letsencrypt(const ph_certs_config_t *config,
             char *cert_path = ph_path_join(domain_dir, "fullchain.pem");
 
             if (privkey_path && cert_path) {
+                /* audit fix (finding 5): honor --force flag.  Without
+                 * --force, skip domains that already have a cert and
+                 * key on disk, matching the local CA / leaf pattern. */
+                if (!force) {
+                    ph_fs_stat_t pst;
+                    if (ph_fs_stat(privkey_path, &pst) == PH_OK &&
+                        pst.exists) {
+                        ph_log_info("certs: %s already exists "
+                                     "(use --force to overwrite)",
+                                     privkey_path);
+                        ph_free(privkey_path);
+                        ph_free(cert_path);
+                        for (size_t j = 0; j < auth_count; j++)
+                            ph_free(auth_urls[j]);
+                        ph_free(auth_urls);
+                        ph_free(order_url);
+                        ph_free(finalize_url);
+                        ph_free(account_url);
+                        ph_cert_domain_sans_free(eff_sans, eff_count);
+                        ph_free(webroot_abs);
+                        ph_free(domain_dir);
+                        ph_free(heap_key);
+                        continue;
+                    }
+                }
+
                 /* ensure output directory */
                 if (ph_fs_mkdir_p(domain_dir, 0755) != PH_OK) {
                     ph_log_error("certs: cannot create output directory: %s",
