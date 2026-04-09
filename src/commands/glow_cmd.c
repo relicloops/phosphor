@@ -142,10 +142,11 @@ int ph_cmd_glow(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
   }
 
   /* step 3: load manifest from embedded template */
-  char *manifest_path = ph_path_join(tmpdir, "template.phosphor.toml");
+  char *manifest_path = ph_manifest_find(tmpdir);
   if (!manifest_path) {
+    ph_log_error("glow: no manifest in embedded template");
     ph_fs_rmtree(tmpdir, NULL);
-    return PH_ERR_INTERNAL;
+    return PH_ERR_CONFIG;
   }
 
   ph_manifest_t manifest;

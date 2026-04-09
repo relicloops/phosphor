@@ -195,30 +195,26 @@ int ph_cmd_serve(const ph_cli_config_t *config,
     memset(&certs_cfg, 0, sizeof(certs_cfg));
 
     {
-        char *toml_path = ph_path_join(project_root_abs,
-                                        "template.phosphor.toml");
+        char *toml_path = ph_manifest_find(project_root_abs);
         if (toml_path) {
-            ph_fs_stat_t st;
-            if (ph_fs_stat(toml_path, &st) == PH_OK && st.is_file) {
-                ph_error_t *merr = NULL;
-                if (ph_manifest_load(toml_path, &manifest, &merr) == PH_OK) {
-                    has_manifest = true;
-                    ph_log_debug("serve: loaded manifest from %s", toml_path);
-                } else {
-                    ph_log_warn("serve: cannot parse manifest: %s",
-                                 merr ? merr->message : "unknown");
-                    ph_error_destroy(merr);
-                }
-
-                /* parse certs separately */
-                ph_error_t *cerr = NULL;
-                if (ph_certs_config_parse(toml_path, &certs_cfg, &cerr)
-                    == PH_OK && certs_cfg.present) {
-                    has_certs = true;
-                    ph_log_debug("serve: loaded [certs] from manifest");
-                }
-                ph_error_destroy(cerr);
+            ph_error_t *merr = NULL;
+            if (ph_manifest_load(toml_path, &manifest, &merr) == PH_OK) {
+                has_manifest = true;
+                ph_log_debug("serve: loaded manifest from %s", toml_path);
+            } else {
+                ph_log_warn("serve: cannot parse manifest: %s",
+                             merr ? merr->message : "unknown");
+                ph_error_destroy(merr);
             }
+
+            /* parse certs separately */
+            ph_error_t *cerr = NULL;
+            if (ph_certs_config_parse(toml_path, &certs_cfg, &cerr)
+                == PH_OK && certs_cfg.present) {
+                has_certs = true;
+                ph_log_debug("serve: loaded [certs] from manifest");
+            }
+            ph_error_destroy(cerr);
             ph_free(toml_path);
         }
     }

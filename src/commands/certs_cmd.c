@@ -5,6 +5,7 @@
 #include "phosphor/error.h"
 #include "phosphor/fs.h"
 #include "phosphor/log.h"
+#include "phosphor/manifest.h"
 #include "phosphor/path.h"
 #include "phosphor/platform.h"
 #include "phosphor/proc.h"
@@ -598,11 +599,13 @@ int ph_cmd_certs(const ph_cli_config_t *config,
     }
 
     /* find and load TOML manifest */
-    char *toml_path = ph_path_join(project_root_abs,
-                                    "template.phosphor.toml");
+    char *toml_path = ph_manifest_find(project_root_abs);
     if (!toml_path) {
+        ph_log_error("certs: no manifest found in %s "
+                     "(tried template.phosphor.toml, manifest.toml)",
+                     project_root_abs);
         ph_free(project_root_abs);
-        return PH_ERR_INTERNAL;
+        return PH_ERR_CONFIG;
     }
 
     ph_error_t *err = NULL;
@@ -618,7 +621,7 @@ int ph_cmd_certs(const ph_cli_config_t *config,
     ph_free(toml_path);
 
     if (!certs_cfg.present) {
-        ph_log_error("certs: no [certs] section in template.phosphor.toml");
+        ph_log_error("certs: no [certs] section in manifest");
         ph_certs_config_destroy(&certs_cfg);
         ph_free(project_root_abs);
         return PH_ERR_CONFIG;

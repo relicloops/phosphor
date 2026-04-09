@@ -369,27 +369,23 @@ int ph_cmd_build(const ph_cli_config_t *config,
         return rc;
     }
 
-    /* step 2b: try loading template.phosphor.toml for build config */
+    /* step 2b: try loading the template manifest for build config */
     bool has_manifest = false;
     ph_manifest_t manifest;
     memset(&manifest, 0, sizeof(manifest));
     {
-        char *manifest_path = ph_path_join(project_root_abs,
-                                            "template.phosphor.toml");
+        char *manifest_path = ph_manifest_find(project_root_abs);
         if (manifest_path) {
-            ph_fs_stat_t mst;
-            if (ph_fs_stat(manifest_path, &mst) == PH_OK && mst.is_file) {
-                ph_error_t *merr = NULL;
-                if (ph_manifest_load(manifest_path, &manifest, &merr)
-                    == PH_OK) {
-                    has_manifest = true;
-                    ph_log_debug("build: loaded manifest from %s",
-                                  manifest_path);
-                } else {
-                    ph_log_warn("build: cannot parse manifest: %s",
-                                 merr ? merr->message : "unknown");
-                    ph_error_destroy(merr);
-                }
+            ph_error_t *merr = NULL;
+            if (ph_manifest_load(manifest_path, &manifest, &merr)
+                == PH_OK) {
+                has_manifest = true;
+                ph_log_debug("build: loaded manifest from %s",
+                              manifest_path);
+            } else {
+                ph_log_warn("build: cannot parse manifest: %s",
+                             merr ? merr->message : "unknown");
+                ph_error_destroy(merr);
             }
             ph_free(manifest_path);
         }
@@ -486,8 +482,7 @@ int ph_cmd_build(const ph_cli_config_t *config,
 
     if (!deploy_dir && has_manifest) {
         /* tier 3: auto-derive from first [[certs.domains]] name */
-        char *toml_path = ph_path_join(project_root_abs,
-                                        "template.phosphor.toml");
+        char *toml_path = ph_manifest_find(project_root_abs);
         if (toml_path) {
             ph_certs_config_t certs_cfg;
             memset(&certs_cfg, 0, sizeof(certs_cfg));

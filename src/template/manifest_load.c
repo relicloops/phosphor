@@ -1,6 +1,7 @@
 #include "phosphor/manifest.h"
 #include "phosphor/platform.h"
 #include "phosphor/alloc.h"
+#include "phosphor/fs.h"
 #include "phosphor/log.h"
 #include "phosphor/path.h"
 
@@ -594,6 +595,31 @@ static ph_result_t parse_hooks(toml_table_t *root,
 }
 
 /* ---- public API ---- */
+
+/* audit fix (2026-04-08T20-06-32Z through 2026-04-09T05-09-51Z,
+ * finding 5): the README documents both template.phosphor.toml and
+ * manifest.toml as valid manifest filenames, but every command only
+ * probed the first. Centralizing the probe here lets all callers
+ * converge on the documented contract. */
+static const char *const PH_MANIFEST_NAMES[] = {
+    "template.phosphor.toml",
+    "manifest.toml",
+};
+static const size_t PH_MANIFEST_NAME_COUNT =
+    sizeof(PH_MANIFEST_NAMES) / sizeof(PH_MANIFEST_NAMES[0]);
+
+char *ph_manifest_find(const char *project_root) {
+    if (!project_root) return NULL;
+    for (size_t i = 0; i < PH_MANIFEST_NAME_COUNT; i++) {
+        char *path = ph_path_join(project_root, PH_MANIFEST_NAMES[i]);
+        if (!path) continue;
+        ph_fs_stat_t st;
+        if (ph_fs_stat(path, &st) == PH_OK && st.is_file)
+            return path;
+        ph_free(path);
+    }
+    return NULL;
+}
 
 ph_result_t ph_manifest_load(const char *path, ph_manifest_t *out,
                               ph_error_t **err) {

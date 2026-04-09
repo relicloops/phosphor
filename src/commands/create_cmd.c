@@ -272,14 +272,17 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
 
   /* step 3: load manifest */
   ph_log_debug("create: template resolved to %s", template_abs);
-  char *manifest_path = ph_path_join(template_abs, "template.phosphor.toml");
+  char *manifest_path = ph_manifest_find(template_abs);
   if (!manifest_path) {
+    ph_log_error("create: no manifest found in %s "
+                 "(tried template.phosphor.toml, manifest.toml)",
+                 template_abs);
     ph_free(template_abs);
     ph_git_cleanup_clone(clone_dir, NULL);
     ph_free(clone_dir);
     ph_archive_cleanup_extract(extract_dir, NULL);
     ph_free(extract_dir);
-    return PH_ERR_INTERNAL;
+    return PH_ERR_CONFIG;
   }
 
   ph_manifest_t manifest;

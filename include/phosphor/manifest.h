@@ -248,7 +248,23 @@ typedef struct {
 /* ---- API ---- */
 
 /*
- * ph_manifest_load -- read and parse a template.phosphor.toml file.
+ * ph_manifest_find -- locate the template manifest in a project directory.
+ *
+ * probes two filenames in order:
+ *   1. template.phosphor.toml  (primary, all shipped templates use this)
+ *   2. manifest.toml           (alternate documented in the README)
+ *
+ * returns:
+ *   - heap-allocated absolute path to the first file that exists as a
+ *     regular file. caller must ph_free() it.
+ *   - NULL if neither file is present (or project_root is NULL).
+ */
+char *ph_manifest_find(const char *project_root);
+
+/*
+ * ph_manifest_load -- read and parse a template manifest file.
+ *
+ * accepts a path returned by ph_manifest_find or constructed manually.
  * on success, caller must call ph_manifest_destroy(out).
  * on error: exit code 3 (parse/schema error) or 6 (version mismatch).
  */
