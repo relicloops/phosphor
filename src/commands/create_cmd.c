@@ -12,6 +12,7 @@
 #include "phosphor/signal.h"
 #include "phosphor/template.h"
 
+#include <dirent.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -273,6 +274,52 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
   /* step 3: load manifest */
   ph_log_debug("create: template resolved to %s", template_abs);
   char *manifest_path = ph_manifest_find(template_abs);
+
+  /* audit fix (finding 9): common archives unpack to a single top-level
+   * wrapper directory (e.g. project-name/template.phosphor.toml).  If
+   * no manifest is found at the extraction root, check for exactly one
+   * visible non-hidden child directory and descend into it. Only applies
+   * when the template source was an archive (extract_dir is non-NULL). */
+  if (!manifest_path && extract_dir) {
+    DIR *td = opendir(template_abs);
+    if (td) {
+      struct dirent *te;
+      char *sole_child = NULL;
+      int child_count = 0;
+      while ((te = readdir(td)) != NULL) {
+        if (te->d_name[0] == '.') continue;
+        child_count++;
+        if (child_count == 1)
+          sole_child = ph_path_join(template_abs, te->d_name);
+        else {
+          ph_free(sole_child);
+          sole_child = NULL;
+          break;
+        }
+      }
+      closedir(td);
+      if (sole_child && child_count == 1) {
+        ph_fs_stat_t sd;
+        if (ph_fs_stat(sole_child, &sd) == PH_OK && sd.is_dir) {
+          char *inner = ph_manifest_find(sole_child);
+          if (inner) {
+            ph_log_debug("create: descended into archive wrapper: %s",
+                         sole_child);
+            ph_free(template_abs);
+            template_abs = sole_child;
+            manifest_path = inner;
+          } else {
+            ph_free(sole_child);
+          }
+        } else {
+          ph_free(sole_child);
+        }
+      } else {
+        ph_free(sole_child);
+      }
+    }
+  }
+
   if (!manifest_path) {
     ph_log_error("create: no manifest found in %s "
                  "(tried template.phosphor.toml, manifest.toml)",
