@@ -1,124 +1,109 @@
-# Phosphor Deep Bugs Audit
+# Phosphor Bugs Audit
 
-Run time: 2026-04-08T17-06-51Z
-Mode: static source audit only
-Scope: `README.md`, `meson.build`, `meson.options`, `src/`, `include/`
-Tree state: audit reflects the current dirty working tree; I did not run builds or tests.
+Run time: `2026-04-09T05-09-51Z`
 
-## Confirmed findings
+Scope:
+- Read-only audit of `README.md`, `meson.build`, `meson.options`, `src/`, and `include/`
+- Focused on new findings not already captured in automation memory from `2026-04-09T02-08-22Z`
+- `audit-fix` skill was not available in this session, so this was a manual audit
 
-### 1. High: `serve --project` still mishandles relative `certs-root`
+Repo state:
+- `main` is ahead of `origin/main` by 26 commits
+- Working tree was otherwise clean
 
-- `ph_cmd_serve()` anchors `www_root`, working-dir, upload-dir, augments-dir, grafts-dir, log-directory, and redirect paths under `project_root_abs`, but it leaves `cfg.ns.certs_root` as the raw flag or manifest string:
-  - `src/commands/serve_cmd.c:338-349`
-  - `src/commands/serve_cmd.c:351-403`
-- The later containment gate calls `serve_validate_under_root("certs-root", cfg.ns.certs_root, project_root_abs)`:
-  - `src/commands/serve_cmd.c:469-500`
-- `serve_validate_under_root()` relies on `ph_path_is_under()`, and `ph_path_is_under()` resolves relative children against the caller's current working directory via `realpath(".")`, not against `project_root_abs`:
-  - `src/commands/serve_cmd.c:82-95`
-  - `src/io/path_norm.c:213-340`
+## Findings
 
-Impact:
+### 1. High: legacy `clean` mode ignores `--dry-run` and `--wipe`
 
-- `phosphor serve --project /path/to/site` can reject a valid relative certs directory from `[certs].output_dir` or `[serve.neonsignal].certs_root` when invoked outside the project root.
-- In the worst case, if the caller cwd happens to contain a matching relative path, the check is performed against the wrong tree entirely.
-- This contradicts the documented intent that serve reads cert defaults from the project manifest while using `--project` as the anchor:
-  - `README.md:111-120`
+Refs:
+- `src/commands/clean_cmd.c:94`
+- `src/commands/clean_cmd.c:165`
+- `src/commands/clean_cmd.c:178`
+- `src/commands/clean_cmd.c:234`
 
-### 2. High: the Let's Encrypt path pipeline is still not rooted to the project, and `--output` can escape it
-
-- The manifest parser now validates `output_dir`, `account_key`, `dir_name`, and `webroot` as relative, non-traversing paths:
-  - `src/certs/certs_config.c:55-79`
-  - `src/certs/certs_config.c:137-154`
-  - `src/certs/certs_config.c:236-263`
-- But `run_letsencrypt()` still uses `config->account_key` and `d->webroot` as raw strings, without anchoring them under `project_root`:
-  - `src/commands/certs_cmd.c:90-107`
-  - `src/commands/certs_cmd.c:285-288`
-- `ph_cmd_certs()` also overwrites `certs_cfg.output_dir` from `--output` without revalidating it:
-  - `src/commands/certs_cmd.c:502-509`
-- `run_letsencrypt()` then builds `domain_dir = ph_path_join(project_root, config->output_dir)` and writes to it without any `ph_path_is_under()` containment check:
-  - `src/commands/certs_cmd.c:121-130`
-  - `src/commands/certs_cmd.c:307-319`
+Why this matters:
+- `clean_via_scripts()` only receives `project_root_abs` and always runs `scripts/_default/clean.sh`.
+- The branch into legacy mode happens before the native implementation consumes `wipe` or `dry-run`.
+- `use_legacy_scripts()` is true either when the binary was compiled with `PHOSPHOR_SCRIPT_FALLBACK` or when the caller passes `--legacy-scripts`.
 
 Impact:
+- `phosphor clean --legacy-scripts --dry-run` can perform real deletions instead of a preview.
+- `phosphor clean --legacy-scripts --wipe` does not guarantee the documented wider delete set, because the flag never reaches the script.
+- In builds compiled with `-Dscript_fallback=true`, this broken behavior becomes the default path for every non-`--stale` clean run.
 
-- `phosphor certs --project /path/to/site --letsencrypt ...` will still read or create `account_key` and HTTP-01 challenge files relative to the caller cwd instead of the target project.
-- `--output=../../somewhere-else` or any other escaping relative path can push the LE private key and certificate output outside the project root, despite the README promising that all cert paths are project-root validated:
-  - `README.md:237-245`
-- The local CA and local leaf code already do a second `ph_path_is_under()` check; the LE path is the inconsistent gap.
+### 2. High: legacy `build` mode bypasses the project-root deploy containment guard
 
-### 3. Medium: `serve` still passes raw `[deploy].public_dir` to the default watcher
+Refs:
+- `src/commands/build_cmd.c:148`
+- `src/commands/build_cmd.c:271`
+- `src/commands/build_cmd.c:344`
+- `src/commands/build_cmd.c:448`
+- `README.md:163`
+- `README.md:165`
 
-- `parse_deploy_config()` copies `[deploy].public_dir` without validation:
-  - `src/template/manifest_load.c:337-347`
-- `ph_cmd_serve()` stores that raw string in `cfg.ns.deploy_dir` for the watcher:
-  - `src/commands/serve_cmd.c:407-413`
-- `ph_serve_start()` appends it directly to the default watcher argv as `--deploy <deploy_dir>`:
-  - `src/serve/serve.c:394-410`
-
-Impact:
-
-- If `[serve.neonsignal].watch = true` and no explicit `watch_cmd` is provided, a manifest with `[deploy].public_dir = "../../outside"` still sends an escaping deploy path to the build-on-change helper.
-- The main `build` command has containment checks for `[deploy].public_dir`; the watcher path bypasses that hardening and can reintroduce out-of-tree writes through the default watch workflow.
-
-### 4. Medium: template `copy` and `render` writes still lack the final containment re-check added for `chmod` and `remove`
-
-- Plan build does an early `ph_path_is_under()` check when `to_abs` is first resolved:
-  - `src/template/planner.c:256-291`
-- During execution, `chmod` and `remove` re-check `plan->dest_dir` immediately before mutating the filesystem:
-  - `src/template/writer.c:789-850`
-- `copy` and `render` do not. They write directly to `op->to_abs` with `ph_fs_atomic_write()` or `ph_fs_write_file()`:
-  - `src/template/writer.c:636-668`
-  - `src/template/writer.c:713-780`
-- `ph_fs_write_file()` opens the target with plain `open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644)`, which follows symlinks:
-  - `src/platform/posix/fs_posix.c:81-104`
+Why this matters:
+- The native build path rejects deploy targets that escape the project root.
+- The legacy branch returns before those checks run and passes `deploy_at_abs` straight to `scripts/_default/all.sh` as `--public`.
+- The runtime `--legacy-scripts` flag enables this path even though the README says the legacy fallback is only available when compiled with `-Dscript_fallback=true`.
 
 Impact:
+- `phosphor build --legacy-scripts --deploy-at=/tmp/outside` can write or clean outside the project tree.
+- This directly violates the documented guarantee that deploy targets are containment-checked before writes happen.
 
-- A symlink swapped into the staging or destination tree after plan construction can redirect single-file `copy` or `render` writes outside `dest_dir`.
-- The codebase already recognized this TOCTOU class for `chmod` and `remove`; the missing symmetry on `copy` and `render` leaves the same class of escape available for file creation and overwrite.
+### 3. Medium: `doctor` and `rm` treat `phosphor.toml` as a manifest even though the docs define it as project config
 
-### 5. Medium: `[build].entry` is still unconstrained and can point outside the project
+Refs:
+- `README.md:56`
+- `README.md:72`
+- `src/commands/doctor_cmd.c:29`
+- `src/commands/rm_cmd.c:66`
+- `src/commands/build_cmd.c:372`
+- `src/commands/serve_cmd.c:188`
+- `src/commands/certs_cmd.c:600`
 
-- `parse_build_config()` copies `[build].entry` without absolute-path or traversal validation:
-  - `src/template/manifest_load.c:285-296`
-- `ph_cmd_build()` passes that manifest value directly to esbuild:
-  - `src/commands/build_cmd.c:728-731`
-
-Impact:
-
-- A project manifest can set `entry = "../other-project/src/app.tsx"` or an absolute path and cause `phosphor build` to bundle code from outside the declared project root.
-- The deploy target is tightly contained, but the input root is not, which is inconsistent with the rest of the build hardening and makes untrusted manifests a broader read surface than the README implies.
-
-## Documentation drift
-
-### 6. Low: public headers still describe feature flags and temp-dir behavior that no longer match Meson or the code
-
-- The public headers still claim optional dependency support is enabled with flags like `-Dlibgit2=true`, `-Dlibarchive=true`, and `-Dpcre2=true`:
-  - `include/phosphor/git_fetch.h:8-12`
-  - `include/phosphor/git_fetch.h:67-69`
-  - `include/phosphor/archive.h:8-12`
-  - `include/phosphor/archive.h:44-45`
-  - `include/phosphor/regex.h:8-12`
-  - `include/phosphor/regex.h:30-32`
-- The top-level Meson build now unconditionally wires in libgit2, libarchive, and PCRE2 and only exposes `script_fallback` and `dashboard` as user options:
-  - `meson.build:126-210`
-  - `meson.options:1-4`
-- The archive and git headers also still document predictable `/tmp/...<pid>-<timestamp>` temp directories, but the implementations now use `mkdtemp()`:
-  - `include/phosphor/archive.h:49-53`
-  - `include/phosphor/git_fetch.h:72-77`
-  - `src/io/archive.c:156-166`
-  - `src/io/git_fetch.c:203-213`
+Why this matters:
+- The README documents `.phosphor.toml` and `phosphor.toml` as walk-up config files used for variable resolution.
+- `doctor` reports `phosphor.toml` as a valid phosphor manifest, and `rm` drops its manifest safety check if `phosphor.toml` exists.
+- The actual runtime commands that need project manifest data still only load `template.phosphor.toml`.
 
 Impact:
+- A directory with only project config can pass `doctor`'s manifest check and `rm`'s safety gate.
+- The same directory will still be treated as missing manifest data by `build`, `serve`, and `certs`.
+- This creates a misleading safety model around destructive commands.
 
-- This is documentation drift rather than a runtime bug, but it makes the public API and build surface look older and looser than the actual implementation.
+### 4. Medium: `serve` prints the wrong HTTPS URL because it omits the active port
 
-## Recommended fix order
+Refs:
+- `src/commands/serve_cmd.c:625`
+- `src/commands/serve_cmd.c:642`
+- `src/commands/serve_cmd.c:684`
+- `src/commands/serve_cmd.c:694`
 
-1. Anchor and revalidate `serve` certs paths against `project_root_abs`, especially `certs_root`.
-2. Root LE `account_key` and `webroot` under the project, and revalidate the `--output` override before use.
-3. Apply the same containment gate to the watcher deploy path that `build` already uses.
-4. Add an execution-time `ph_path_is_under()` re-check for file `copy` and `render` operations.
-5. Validate `[build].entry` the same way path-like manifest fields are validated elsewhere.
-6. Refresh the public header comments so they match the current Meson feature model and temp-dir implementation.
+Why this matters:
+- The startup URL is formatted as `https://<host>` while the actual server port is tracked separately and defaults to `9443`.
+- The same truncated URL is reused in the ncurses dashboard info panel.
+
+Impact:
+- The banner and dashboard point users at port 443 instead of the real dev server.
+- On the default configuration, the clickable/openable URL is wrong on every run.
+
+### 5. Medium: recursive directory writes still follow symlinks during copy/render walks
+
+Refs:
+- `src/io/fs_copytree.c:107`
+- `src/template/writer.c:419`
+- `src/platform/posix/fs_posix.c:81`
+
+Why this matters:
+- `ph_fs_copytree()` and `rendertree_recurse()` both write descendants through `ph_fs_write_file()`.
+- `ph_fs_write_file()` opens with `O_WRONLY | O_CREAT | O_TRUNC`, so it follows symlinks.
+- Single-file template ops gained execute-time containment re-checks, but recursive descendant writes did not.
+
+Impact:
+- A concurrent symlink swap inside a deploy or staging tree can redirect writes outside the intended root.
+- This is harder to exploit than the legacy build/clean issues because it needs local filesystem races, but it is still a real write-escape surface.
+
+## Notes
+
+- I did not repeat earlier memory findings about the documented `[variables]` config format, `manifest.toml` support, `ph_serve_wait()` signal mapping, unescaped esbuild define injection, or `doctor`'s global `esbuild` check.
+- No repository source files were modified during this run. Only this audit report and automation memory were updated.
