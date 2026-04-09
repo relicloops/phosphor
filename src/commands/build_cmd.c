@@ -266,6 +266,47 @@ static int build_via_scripts(const char *project_root_abs,
     return exit_code;
 }
 
+/* ---- JS string escape for esbuild --define values ---- */
+
+/*
+ * escape_define_value -- return a heap-allocated JS-safe copy of `in`.
+ * escapes: " -> \", \ -> \\, \n -> \n, \r -> \r, \t -> \t, and
+ * control chars 0x00-0x1F -> \u00XX.  caller must ph_free().
+ */
+static char *escape_define_value(const char *in) {
+    if (!in) {
+        char *e = ph_alloc(1);
+        if (e) e[0] = '\0';
+        return e;
+    }
+
+    /* worst case: every char becomes \u00XX (6 chars) */
+    size_t ilen = strlen(in);
+    size_t cap = ilen * 6 + 1;
+    char *out = ph_alloc(cap);
+    if (!out) return NULL;
+
+    size_t o = 0;
+    for (size_t i = 0; i < ilen; i++) {
+        unsigned char c = (unsigned char)in[i];
+        switch (c) {
+        case '"':  out[o++] = '\\'; out[o++] = '"';  break;
+        case '\\': out[o++] = '\\'; out[o++] = '\\'; break;
+        case '\n': out[o++] = '\\'; out[o++] = 'n';  break;
+        case '\r': out[o++] = '\\'; out[o++] = 'r';  break;
+        case '\t': out[o++] = '\\'; out[o++] = 't';  break;
+        default:
+            if (c < 0x20) {
+                o += (size_t)snprintf(out + o, cap - o, "\\u%04x", c);
+            } else {
+                out[o++] = (char)c;
+            }
+        }
+    }
+    out[o] = '\0';
+    return out;
+}
+
 /* ---- check if legacy script mode is active ---- */
 
 /* audit fix (findings 2 and 12): the legacy shell-script path is
@@ -757,6 +798,9 @@ int ph_cmd_build(const ph_cli_config_t *config,
         ph_argv_push(&ab, "--splitting");
         ph_argv_push(&ab, "--entry-names=[name]");
 
+        /* audit fix (finding 3): escape define values as JS string
+         * literals before passing to esbuild. Unescaped ", \, newlines,
+         * or control characters produce malformed --define arguments. */
         /* inject build-time defines */
         if (has_manifest && manifest.build.present &&
             manifest.build.define_count > 0) {
@@ -786,22 +830,37 @@ int ph_cmd_build(const ph_cli_config_t *config,
                     }
                 }
 
-                ph_argv_pushf(&ab, "--define:%s=\"%s\"", d->name, val);
+                char *esc = escape_define_value(val);
+                if (esc) {
+                    ph_argv_pushf(&ab, "--define:%s=\"%s\"", d->name, esc);
+                    ph_free(esc);
+                }
             }
         } else {
             /* legacy hardcoded defines for backward compat */
-            ph_argv_pushf(&ab, "--define:__TLD__=\"%s\"", tld_eff);
-            ph_argv_pushf(&ab, "--define:__SITE_OWNER__=\"%s\"",
-                           env_or("SITE_OWNER", "Unknown Owner"));
-            ph_argv_pushf(&ab, "--define:__SITE_OWNER_SLUG__=\"%s\"",
-                           env_or("SITE_OWNER_SLUG", "unknown-owner"));
-            ph_argv_pushf(&ab, "--define:__SITE_GITHUB__=\"%s\"",
-                           env_or("SITE_GITHUB", "https://github.com"));
-            ph_argv_pushf(&ab, "--define:__SITE_INSTAGRAM__=\"%s\"",
-                           env_or("SITE_INSTAGRAM",
-                                  "https://www.instagram.com"));
-            ph_argv_pushf(&ab, "--define:__SITE_X__=\"%s\"",
-                           env_or("SITE_X", "https://x.com"));
+            const char *legacy_pairs[][2] = {
+                {"__TLD__",            NULL},
+                {"__SITE_OWNER__",     NULL},
+                {"__SITE_OWNER_SLUG__",NULL},
+                {"__SITE_GITHUB__",    NULL},
+                {"__SITE_INSTAGRAM__", NULL},
+                {"__SITE_X__",         NULL},
+            };
+            legacy_pairs[0][1] = tld_eff;
+            legacy_pairs[1][1] = env_or("SITE_OWNER", "Unknown Owner");
+            legacy_pairs[2][1] = env_or("SITE_OWNER_SLUG", "unknown-owner");
+            legacy_pairs[3][1] = env_or("SITE_GITHUB", "https://github.com");
+            legacy_pairs[4][1] = env_or("SITE_INSTAGRAM",
+                                         "https://www.instagram.com");
+            legacy_pairs[5][1] = env_or("SITE_X", "https://x.com");
+            for (size_t i = 0; i < 6; i++) {
+                char *esc = escape_define_value(legacy_pairs[i][1]);
+                if (esc) {
+                    ph_argv_pushf(&ab, "--define:%s=\"%s\"",
+                                   legacy_pairs[i][0], esc);
+                    ph_free(esc);
+                }
+            }
         }
 
         ph_argv_pushf(&ab, "--outdir=%s", build_dir);
