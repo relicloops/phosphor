@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>phosphor args-parser architecture</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>phosphor <span class="accent">args-parser</span> architecture</h1>
+    <p class="subtitle">click any node for details &middot; hover to highlight connections</p>
+  </header>
+
+  <main>
+    <!-- pipeline banner -->
+    <section class="pipeline">
+      <div class="pipe-step" data-node="lexer">lexer</div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe-step" data-node="parser">parser</div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe-step" data-node="validator">validator</div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe-step" data-node="dispatch">dispatch</div>
+    </section>
+
+    <div class="diagram-grid">
+      <!-- left: internal library -->
+      <div class="column col-internal">
+        <h2>args-parser internals</h2>
+        <p class="col-sub">src/args-parser/</p>
+
+        <div class="node node-internal" id="n-header" data-node="header">
+          <div class="node-title">include/phosphor/args.h</div>
+          <div class="node-desc">types + public API</div>
+          <ul class="node-symbols">
+            <li>ph_token_stream_t</li>
+            <li>ph_parsed_args_t</li>
+            <li>ph_cli_config_t</li>
+            <li>ph_argspec_t</li>
+            <li>ph_kvp_node_t</li>
+            <li>UX001..UX007 subcodes</li>
+          </ul>
+        </div>
+
+        <div class="node node-internal" id="n-lexer" data-node="lexer">
+          <div class="node-title">lexer.c</div>
+          <div class="node-desc">argv[] &rarr; token stream</div>
+          <ul class="node-symbols">
+            <li>ph_lexer_tokenize()</li>
+            <li>ph_token_stream_destroy()</li>
+            <li>--flag=val | --flag | --enable-x | --disable-x | positional</li>
+            <li>rejects short flags (-x)</li>
+          </ul>
+        </div>
+
+        <div class="node node-internal" id="n-parser" data-node="parser">
+          <div class="node-title">parser.c</div>
+          <div class="node-desc">tokens &rarr; parsed args</div>
+          <ul class="node-symbols">
+            <li>ph_parser_parse()</li>
+            <li>ph_parsed_args_destroy()</li>
+            <li>command matching</li>
+            <li>duplicate + polarity conflict detection</li>
+          </ul>
+        </div>
+
+        <div class="node node-internal" id="n-validate" data-node="validator">
+          <div class="node-title">validate.c</div>
+          <div class="node-desc">type-check + required flags</div>
+          <ul class="node-symbols">
+            <li>ph_validate()</li>
+            <li>int, url, path, kvp, enum checks</li>
+            <li>path traversal guard</li>
+            <li>required-flag enforcement</li>
+          </ul>
+        </div>
+
+        <div class="node node-internal" id="n-spec" data-node="spec">
+          <div class="node-title">spec.c</div>
+          <div class="node-desc">config-driven lookups</div>
+          <ul class="node-symbols">
+            <li>ph_arg_type_name()</li>
+            <li>ph_cmd_def_name()</li>
+            <li>ph_cmd_def_specs()</li>
+            <li>ph_cmd_def_spec_lookup()</li>
+          </ul>
+        </div>
+
+        <div class="node node-internal" id="n-kvp" data-node="kvp">
+          <div class="node-title">kvp.c</div>
+          <div class="node-desc">!key:val|key:{nested} parser</div>
+          <ul class="node-symbols">
+            <li>ph_kvp_parse()</li>
+            <li>ph_kvp_destroy()</li>
+            <li>recursive descent, max depth 8</li>
+            <li>quoted strings, bool, int scalars</li>
+          </ul>
+        </div>
+
+        <div class="node node-internal" id="n-helpers" data-node="helpers">
+          <div class="node-title">args_helpers.c</div>
+          <div class="node-desc">flag lookup convenience</div>
+          <ul class="node-symbols">
+            <li>ph_args_get_flag()</li>
+            <li>ph_args_has_flag()</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- center: glue layer -->
+      <div class="column col-glue">
+        <h2>glue layer</h2>
+        <p class="col-sub">pipeline owner + routing</p>
+
+        <div class="node node-glue" id="n-main" data-node="main">
+          <div class="node-title">src/main.c</div>
+          <div class="node-desc">owns the full pipeline</div>
+          <ul class="node-symbols">
+            <li>ph_lexer_tokenize()</li>
+            <li>ph_parser_parse()</li>
+            <li>ph_validate()</li>
+            <li>ph_token_stream_destroy()</li>
+            <li>ph_parsed_args_destroy()</li>
+          </ul>
+        </div>
+
+        <div class="node node-glue" id="n-cli-h" data-node="cli-h">
+          <div class="node-title">include/phosphor/cli.h</div>
+          <div class="node-desc">dispatch interface header</div>
+          <ul class="node-symbols">
+            <li>uses ph_cli_config_t</li>
+            <li>uses ph_parsed_args_t</li>
+          </ul>
+        </div>
+
+        <div class="node node-glue" id="n-dispatch" data-node="dispatch">
+          <div class="node-title">src/cli/cli_dispatch.c</div>
+          <div class="node-desc">routes to command handler</div>
+          <ul class="node-symbols">
+            <li>ph_cli_config_t param</li>
+            <li>ph_parsed_args_t param</li>
+          </ul>
+        </div>
+
+        <div class="node node-glue" id="n-help" data-node="help">
+          <div class="node-title">src/cli/cli_help.c</div>
+          <div class="node-desc">renders help text from specs</div>
+          <ul class="node-symbols">
+            <li>ph_cmd_def_t iteration</li>
+            <li>ph_argspec_t iteration</li>
+            <li>ph_arg_type_name()</li>
+          </ul>
+        </div>
+
+        <div class="node node-glue" id="n-cmds-h" data-node="cmds-h">
+          <div class="node-title">include/phosphor/commands.h</div>
+          <div class="node-desc">command handler signatures</div>
+          <ul class="node-symbols">
+            <li>extern ph_cli_config_t</li>
+            <li>handler(config, args) pattern</li>
+          </ul>
+        </div>
+
+        <div class="node node-glue" id="n-registry" data-node="registry">
+          <div class="node-title">src/commands/phosphor_commands.c</div>
+          <div class="node-desc">spec tables + global config</div>
+          <ul class="node-symbols">
+            <li>all ph_argspec_t tables</li>
+            <li>all ph_cmd_def_t entries</li>
+            <li>exported ph_cli_config_t</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- right: consumers -->
+      <div class="column col-consumer">
+        <h2>consumers</h2>
+        <p class="col-sub">command handlers + template engine</p>
+
+        <div class="node node-consumer" id="n-create" data-node="create">
+          <div class="node-title">create_cmd.c</div>
+          <div class="node-desc">scaffold from template</div>
+          <ul class="node-symbols">
+            <li>get: name, template, output, checksum</li>
+            <li>has: dry-run, force, verbose, toml</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-build" data-node="build">
+          <div class="node-title">build_cmd.c</div>
+          <div class="node-desc">esbuild bundle + deploy</div>
+          <ul class="node-symbols">
+            <li>get: project, deploy-at, tld</li>
+            <li>has: clean-first, verbose, strict, toml</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-clean" data-node="clean">
+          <div class="node-title">clean_cmd.c</div>
+          <div class="node-desc">remove build artifacts</div>
+          <ul class="node-symbols">
+            <li>has: stale, wipe, dry-run, verbose</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-rm" data-node="rm">
+          <div class="node-title">rm_cmd.c</div>
+          <div class="node-desc">sandboxed path removal</div>
+          <ul class="node-symbols">
+            <li>get: specific, project</li>
+            <li>has: force, verbose</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-certs" data-node="certs">
+          <div class="node-title">certs_cmd.c</div>
+          <div class="node-desc">TLS / ACME certificates</div>
+          <ul class="node-symbols">
+            <li>get: domain, action, project, output</li>
+            <li>has: generate, local, letsencrypt, ca-only, staging</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-doctor" data-node="doctor">
+          <div class="node-title">doctor_cmd.c</div>
+          <div class="node-desc">project diagnostics</div>
+          <ul class="node-symbols">
+            <li>get: project</li>
+            <li>has: verbose, toml</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-glow" data-node="glow">
+          <div class="node-title">glow_cmd.c</div>
+          <div class="node-desc">embedded cathode-landing</div>
+          <ul class="node-symbols">
+            <li>get: name, output, description, github-url</li>
+            <li>has: force, dry-run, verbose</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-serve" data-node="serve">
+          <div class="node-title">serve_cmd.c</div>
+          <div class="node-desc">dev server (most flags)</div>
+          <ul class="node-symbols">
+            <li>get: project, host, port, www-root, +15 more</li>
+            <li>has: verbose, no-redirect, watch, +6 more</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer" id="n-filament" data-node="filament">
+          <div class="node-title">filament_cmd.c</div>
+          <div class="node-desc">stub (no-op)</div>
+          <ul class="node-symbols">
+            <li>receives args, does nothing</li>
+          </ul>
+        </div>
+
+        <div class="node node-consumer node-template" id="n-varmerge" data-node="varmerge">
+          <div class="node-title">src/template/var_merge.c</div>
+          <div class="node-desc">CLI flags &rarr; template vars</div>
+          <ul class="node-symbols">
+            <li>ph_cmd_def_specs()</li>
+            <li>ph_argspec_t iteration</li>
+            <li>ph_args_get_flag()</li>
+            <li>4-level precedence merge</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- detail panel -->
+    <aside class="detail-panel" id="detail-panel">
+      <button class="detail-close" id="detail-close">&times;</button>
+      <h3 id="detail-title"></h3>
+      <p id="detail-body"></p>
+    </aside>
+  </main>
+
+  <footer>
+    <p>phosphor &middot; args-parser diagram &middot; generated 2026-04-09</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
