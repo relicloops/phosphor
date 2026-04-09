@@ -63,27 +63,17 @@ int ph_cmd_rm(const ph_cli_config_t *config,
         return PH_ERR_INTERNAL;
     }
 
-    /* step 3: manifest guard -- require --force when no manifest found */
+    /* step 3: manifest guard -- require --force when no manifest found.
+     * audit fix (finding 13): only probe template.phosphor.toml and
+     * manifest.toml via ph_manifest_find.  phosphor.toml is project
+     * config, not a template manifest. */
     if (!force) {
-        char *manifest_path = ph_path_join(project_root_abs,
-                                           "template.phosphor.toml");
-        char *alt_manifest  = ph_path_join(project_root_abs,
-                                           "phosphor.toml");
-        ph_fs_stat_t mst;
-        bool has_manifest = false;
-
-        if (manifest_path &&
-            ph_fs_stat(manifest_path, &mst) == PH_OK && mst.exists)
-            has_manifest = true;
-        if (!has_manifest && alt_manifest &&
-            ph_fs_stat(alt_manifest, &mst) == PH_OK && mst.exists)
-            has_manifest = true;
-
+        char *manifest_path = ph_manifest_find(project_root_abs);
+        bool has_manifest = (manifest_path != NULL);
         ph_free(manifest_path);
-        ph_free(alt_manifest);
 
         if (!has_manifest) {
-            ph_log_error("rm: no phosphor manifest found in project root; "
+            ph_log_error("rm: no template manifest found in project root; "
                          "use --force to remove anyway");
             ph_free(project_root_abs);
             return PH_ERR_USAGE;

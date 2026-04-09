@@ -26,27 +26,21 @@ static const char *S_FAIL = "[FAIL]";
 
 /* ---- check: manifest ---- */
 
+/* audit fix (finding 13): phosphor.toml is project config, not a
+ * template manifest. Probing it here gave doctor a false positive for
+ * directories that have config but no manifest. Use ph_manifest_find
+ * which probes template.phosphor.toml and manifest.toml only. */
 static int check_manifest(const char *project_root) {
-    char *path1 = ph_path_join(project_root, "template.phosphor.toml");
-    char *path2 = ph_path_join(project_root, "phosphor.toml");
-
-    ph_fs_stat_t st;
-    if (path1 && ph_fs_stat(path1, &st) == PH_OK && st.is_file) {
-        ph_log_info("%s manifest: template.phosphor.toml found", S_OK);
-        ph_free(path1);
-        ph_free(path2);
-        return 0;
-    }
-    if (path2 && ph_fs_stat(path2, &st) == PH_OK && st.is_file) {
-        ph_log_info("%s manifest: phosphor.toml found", S_OK);
-        ph_free(path1);
-        ph_free(path2);
+    char *path = ph_manifest_find(project_root);
+    if (path) {
+        const char *base = strrchr(path, '/');
+        base = base ? base + 1 : path;
+        ph_log_info("%s manifest: %s found", S_OK, base);
+        ph_free(path);
         return 0;
     }
 
-    ph_log_info("%s manifest: no phosphor manifest found", S_WARN);
-    ph_free(path1);
-    ph_free(path2);
+    ph_log_info("%s manifest: no template manifest found", S_WARN);
     return 1;
 }
 
