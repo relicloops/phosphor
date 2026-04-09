@@ -78,8 +78,34 @@ ph_result_t ph_validate(const ph_cli_config_t *config,
       return PH_ERR;
     }
 
+    /* UX002: valued spec given bare --flag (no =value) */
+    if (spec->form == PH_FORM_VALUED && flag->kind == PH_FLAG_BOOL) {
+      *err = ph_error_createf(
+          PH_ERR_USAGE, PH_UX002_MISSING_VALUE,
+          "flag --%s requires a value (use --%s=<value>)",
+          flag->name, flag->name);
+      return PH_ERR;
+    }
+
+    /* UX001: toggle syntax on non-toggle spec */
+    if (spec->form != PH_FORM_TOGGLE &&
+        (flag->kind == PH_FLAG_ENABLE || flag->kind == PH_FLAG_DISABLE)) {
+      *err = ph_error_createf(
+          PH_ERR_USAGE, PH_UX001_UNKNOWN_FLAG,
+          "flag --%s does not support --enable-/--disable- syntax",
+          flag->name);
+      return PH_ERR;
+    }
+
     /* type checks only apply to valued flags */
     if (flag->kind == PH_FLAG_VALUED && flag->value) {
+
+      /* UX002: reject empty assignment (--flag=) for all types */
+      if (!*flag->value) {
+        *err = ph_error_createf(PH_ERR_USAGE, PH_UX002_MISSING_VALUE,
+                                "flag --%s has an empty value", flag->name);
+        return PH_ERR;
+      }
 
       switch (spec->type) {
 
@@ -166,10 +192,15 @@ ph_result_t ph_validate(const ph_cli_config_t *config,
 
       bool found = false;
       for (size_t f = 0; f < args->flag_count; f++) {
-        if (strcmp(args->flags[f].name, specs[s].name) == 0) {
-          found = true;
-          break;
+        if (strcmp(args->flags[f].name, specs[s].name) != 0)
+          continue;
+        /* valued specs require an actual valued flag, not bare --flag */
+        if (specs[s].form == PH_FORM_VALUED &&
+            args->flags[f].kind != PH_FLAG_VALUED) {
+          continue;
         }
+        found = true;
+        break;
       }
       if (!found) {
         *err = ph_error_createf(PH_ERR_USAGE, PH_UX002_MISSING_VALUE,
