@@ -23,6 +23,20 @@ static ph_result_t copytree_recurse(const char *src, const char *dst,
         return PH_ERR;
     }
 
+    /* audit fix (finding 1): validate the top-level destination
+     * before mkdir_p follows any symlinked components.  The per-child
+     * check (below, in the readdir loop) only fires on descendants;
+     * without this guard the root dst itself can be a symlink outside
+     * contain_root and the entire tree writes through it. */
+    if (depth == 0 && contain_root &&
+        !ph_path_is_under(dst, contain_root)) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                "copytree: destination escapes containment root: %s",
+                dst);
+        return PH_ERR;
+    }
+
     DIR *d = opendir(src);
     if (!d) {
         if (err)

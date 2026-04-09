@@ -633,6 +633,19 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
             }
 
             if (st.is_dir) {
+                /* audit fix (finding 1): validate the top-level
+                 * destination before entering the recursive walk,
+                 * mirroring the single-file branches (lines 663-669).
+                 * Without this the copytree walker only checks
+                 * descendants, not the root directory itself. */
+                if (plan->dest_dir &&
+                    !ph_path_is_under(op->to_abs, plan->dest_dir)) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                            "copy op %zu: target escapes dest_dir: %s",
+                            i, op->to_abs);
+                    goto cleanup_err;
+                }
                 /* audit fix: reset deny-hit state before the walk and
                  * check after. a hit inside the recursive walker is a hard
                  * error, even though the walker only saw a skip. */
@@ -733,6 +746,17 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
             }
 
             if (st.is_dir) {
+                /* audit fix (finding 1): top-level destination check
+                 * for the render directory branch, mirroring the
+                 * single-file check and the copy directory branch. */
+                if (plan->dest_dir &&
+                    !ph_path_is_under(op->to_abs, plan->dest_dir)) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                            "render op %zu: target escapes dest_dir: %s",
+                            i, op->to_abs);
+                    goto cleanup_err;
+                }
                 /* audit fix: reset deny-hit state before the walk and
                  * check after. see copy op above for rationale. */
                 filter_ctx_reset_deny(&filter_ctx);
