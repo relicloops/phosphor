@@ -618,8 +618,12 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         domain_val = certs_cfg.domains[0].name;
     const char *url_host = domain_val ? domain_val : ns_bind_val;
 
+    /* audit fix (finding 14): include the active port in the URL so
+     * the startup banner and dashboard point at the actual dev server
+     * instead of implying port 443. */
     char url_buf[256];
-    snprintf(url_buf, sizeof(url_buf), "https://%s", url_host);
+    snprintf(url_buf, sizeof(url_buf), "https://%s:%d",
+             url_host, ns_port_val);
     char port_buf[32];
     snprintf(port_buf, sizeof(port_buf), "%d", ns_port_val);
 

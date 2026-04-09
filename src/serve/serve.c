@@ -454,6 +454,11 @@ int ph_serve_wait(ph_serve_session_t *session) {
 
     int worst_exit = 0;
     int remaining = session->child_count;
+    /* audit fix (finding 10): latch signal state so we can return
+     * PH_ERR_SIGNAL instead of a raw child exit code. The SIGTERM
+     * forward to children stays unchanged; only the final return
+     * value is normalized. */
+    bool signaled = false;
 
     while (remaining > 0) {
         int status;
@@ -462,6 +467,7 @@ int ph_serve_wait(ph_serve_session_t *session) {
         if (pid < 0) {
             if (errno == EINTR) {
                 /* signal received -- forward SIGTERM to all children */
+                signaled = true;
                 if (session->ns_pid > 0)
                     kill(-(session->ns_pid), SIGTERM);
                 if (session->redir_pid > 0)
@@ -518,7 +524,7 @@ int ph_serve_wait(ph_serve_session_t *session) {
         }
     }
 
-    return worst_exit;
+    return signaled ? PH_ERR_SIGNAL : worst_exit;
 }
 
 /* ---- fd cleanup ---- */
