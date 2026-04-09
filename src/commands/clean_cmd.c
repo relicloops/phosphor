@@ -91,7 +91,10 @@ static int scan_stale_dirs(const char *project_root, bool dry_run,
 
 /* ---- legacy: clean via shell scripts ---- */
 
-static int clean_via_scripts(const char *project_root_abs) {
+/* audit fix (finding 12): forward --dry-run and --wipe to the script
+ * so the legacy path honors the same flags the native path does. */
+static int clean_via_scripts(const char *project_root_abs,
+                             bool dry_run, bool wipe) {
     /* validate that script exists */
     char *script_path = ph_path_join(project_root_abs,
                                      "scripts/_default/clean.sh");
@@ -106,10 +109,12 @@ static int clean_via_scripts(const char *project_root_abs) {
     ph_free(script_path);
 
     ph_argv_builder_t ab;
-    if (ph_argv_init(&ab, 4) != PH_OK) return PH_ERR_INTERNAL;
+    if (ph_argv_init(&ab, 8) != PH_OK) return PH_ERR_INTERNAL;
 
     ph_argv_push(&ab, "sh");
     ph_argv_push(&ab, "scripts/_default/clean.sh");
+    if (dry_run) ph_argv_push(&ab, "--dry-run");
+    if (wipe)    ph_argv_push(&ab, "--wipe");
 
     char **argv = ph_argv_finalize(&ab);
     if (!argv) return PH_ERR_INTERNAL;
@@ -160,12 +165,9 @@ static int clean_via_scripts(const char *project_root_abs) {
     return child_exit;
 }
 
-/* ---- check if legacy script mode is active ---- */
+/* audit fix (findings 2 and 12): legacy path is compile-time gated */
 
-static bool use_legacy_scripts(const ph_parsed_args_t *args) {
-    if (ph_args_has_flag(args, "legacy-scripts"))
-        return true;
-
+static bool use_legacy_scripts(void) {
 #ifdef PHOSPHOR_SCRIPT_FALLBACK
     return true;
 #else
@@ -221,6 +223,16 @@ int ph_cmd_clean(const ph_cli_config_t *config,
         return PH_ERR_INTERNAL;
     }
 
+    /* audit fix: reject --legacy-scripts when not compiled in */
+#ifndef PHOSPHOR_SCRIPT_FALLBACK
+    if (ph_args_has_flag(args, "legacy-scripts")) {
+        ph_log_error("clean: --legacy-scripts requires compilation with "
+                     "-Dscript_fallback=true");
+        ph_free(project_root_abs);
+        return PH_ERR_USAGE;
+    }
+#endif
+
     /* step 3: verify project root exists */
     ph_fs_stat_t root_st;
     if (ph_fs_stat(project_root_abs, &root_st) != PH_OK ||
@@ -232,12 +244,11 @@ int ph_cmd_clean(const ph_cli_config_t *config,
     }
 
     /* legacy scripts dispatch (not for --stale; stale is always native) */
-    if (!stale && use_legacy_scripts(args)) {
-        if (ph_args_has_flag(args, "legacy-scripts"))
-            ph_log_warn("clean: --legacy-scripts is deprecated; "
-                         "will be removed in a future release");
+    if (!stale && use_legacy_scripts()) {
+        ph_log_warn("clean: using deprecated shell-script fallback; "
+                     "recompile without -Dscript_fallback=true to disable");
 
-        int rc = clean_via_scripts(project_root_abs);
+        int rc = clean_via_scripts(project_root_abs, dry_run, wipe);
         ph_free(project_root_abs);
         return rc;
     }

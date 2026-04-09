@@ -268,12 +268,14 @@ static int build_via_scripts(const char *project_root_abs,
 
 /* ---- check if legacy script mode is active ---- */
 
-static bool use_legacy_scripts(const ph_parsed_args_t *args) {
-    /* runtime: --legacy-scripts flag */
-    if (ph_args_has_flag(args, "legacy-scripts"))
-        return true;
-
-    /* compile-time: -DPHOSPHOR_SCRIPT_FALLBACK=1 */
+/* audit fix (findings 2 and 12): the legacy shell-script path is
+ * compile-time gated via -Dscript_fallback=true. Previously the
+ * runtime --legacy-scripts flag bypassed the gate and also skipped
+ * the native deploy containment guard. Now:
+ *   - use_legacy_scripts only checks the compile-time flag,
+ *   - the runtime flag is rejected at parse time when the fallback
+ *     is not compiled in (see PH_REJECT_LEGACY_SCRIPTS below). */
+static bool use_legacy_scripts(void) {
 #ifdef PHOSPHOR_SCRIPT_FALLBACK
     return true;
 #else
@@ -341,11 +343,20 @@ int ph_cmd_build(const ph_cli_config_t *config,
         return PH_ERR_INTERNAL;
     }
 
+    /* audit fix: reject --legacy-scripts when not compiled in */
+#ifndef PHOSPHOR_SCRIPT_FALLBACK
+    if (ph_args_has_flag(args, "legacy-scripts")) {
+        ph_log_error("build: --legacy-scripts requires compilation with "
+                     "-Dscript_fallback=true");
+        ph_free(project_root_abs);
+        return PH_ERR_USAGE;
+    }
+#endif
+
     /* legacy scripts dispatch */
-    if (use_legacy_scripts(args)) {
-        if (ph_args_has_flag(args, "legacy-scripts"))
-            ph_log_warn("build: --legacy-scripts is deprecated; "
-                         "will be removed in a future release");
+    if (use_legacy_scripts()) {
+        ph_log_warn("build: using deprecated shell-script fallback; "
+                     "recompile without -Dscript_fallback=true to disable");
 
         /* resolve deploy-at for legacy path */
         char *legacy_deploy = NULL;
@@ -359,6 +370,17 @@ int ph_cmd_build(const ph_cli_config_t *config,
                     ph_free(j);
                 }
             }
+        }
+
+        /* audit fix: containment-check the legacy deploy path the
+         * same way the native path does at deploy_at_escapes_root. */
+        if (legacy_deploy &&
+            deploy_at_escapes_root(legacy_deploy, project_root_abs)) {
+            ph_log_error("build: legacy --deploy-at escapes project root: "
+                         "%s", legacy_deploy);
+            ph_free(legacy_deploy);
+            ph_free(project_root_abs);
+            return PH_ERR_VALIDATE;
         }
 
         int rc = build_via_scripts(project_root_abs, legacy_deploy,
