@@ -697,6 +697,17 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                     }
                 }
 
+                /* audit fix (finding 6): preserve source mode.
+                 * recursive paths do this in copytree; single-file
+                 * writes (especially atomic via mkstemp) would
+                 * otherwise inherit 0600 or 0644. */
+                if (ph_fs_chmod(op->to_abs, st.mode & 07777) != PH_OK) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_FS, 0,
+                            "copy op %zu: cannot chmod: %s", i, op->to_abs);
+                    goto cleanup_err;
+                }
+
                 stats->bytes_written += data_len;
                 stats->files_copied++;
                 ph_free(data);
@@ -824,6 +835,16 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                         ph_free(data);
                         goto cleanup_err;
                     }
+                }
+
+                /* audit fix (finding 6): preserve source mode */
+                if (ph_fs_chmod(op->to_abs, st.mode & 07777) != PH_OK) {
+                    if (err)
+                        *err = ph_error_createf(PH_ERR_FS, 0,
+                            "render op %zu: cannot chmod: %s", i, op->to_abs);
+                    if (out_owned) ph_free(out);
+                    ph_free(data);
+                    goto cleanup_err;
                 }
 
                 stats->bytes_written += out_len;
