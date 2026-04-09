@@ -85,6 +85,41 @@ static ph_result_t parse_config_toml(const char *path, ph_config_t *cfg,
         }
     }
 
+    /* audit fix (finding 1): descend into [variables] sub-table.
+     * README.md:54-79 documents .phosphor.toml / phosphor.toml with a
+     * [variables] table that feeds template variable resolution, but
+     * the root-scalar loop above never descended into it. Entries from
+     * [variables] override root-level scalars of the same name so the
+     * documented precedence (project config > env > manifest default)
+     * is honored. Uses ph_config_set to handle growth and overwrite. */
+    toml_table_t *vars_tbl = toml_table_table(root, "variables");
+    if (vars_tbl) {
+        int vlen = toml_table_len(vars_tbl);
+        for (int i = 0; i < vlen; i++) {
+            int keylen;
+            const char *key = toml_table_key(vars_tbl, i, &keylen);
+            if (!key) continue;
+
+            toml_value_t v = toml_table_string(vars_tbl, key);
+            if (v.ok) {
+                ph_config_set(cfg, key, v.u.s);
+                free(v.u.s);
+                continue;
+            }
+            toml_value_t vb = toml_table_bool(vars_tbl, key);
+            if (vb.ok) {
+                ph_config_set(cfg, key, vb.u.b ? "true" : "false");
+                continue;
+            }
+            toml_value_t vi = toml_table_int(vars_tbl, key);
+            if (vi.ok) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%lld", (long long)vi.u.i);
+                ph_config_set(cfg, key, buf);
+            }
+        }
+    }
+
     toml_free(root);
     return PH_OK;
 }
