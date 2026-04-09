@@ -287,7 +287,8 @@ int ph_cmd_create(const ph_cli_config_t *config, const ph_parsed_args_t *args) {
       char *sole_child = NULL;
       int child_count = 0;
       while ((te = readdir(td)) != NULL) {
-        if (te->d_name[0] == '.') continue;
+        if (te->d_name[0] == '.' ||
+            ph_metadata_is_denied(te->d_name)) continue;
         child_count++;
         if (child_count == 1)
           sole_child = ph_path_join(template_abs, te->d_name);

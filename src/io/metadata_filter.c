@@ -10,6 +10,7 @@ static const char *deny_exact[] = {
     ".Trashes",
     "desktop.ini",
     ".fseventsd",
+    "__MACOSX",
 };
 
 static const char *deny_patterns[] = {
