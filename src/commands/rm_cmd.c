@@ -4,6 +4,7 @@
 #include "phosphor/error.h"
 #include "phosphor/fs.h"
 #include "phosphor/log.h"
+#include "phosphor/manifest.h"
 #include "phosphor/path.h"
 #include "phosphor/platform.h"
 
