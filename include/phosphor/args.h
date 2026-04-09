@@ -218,6 +218,8 @@ const char *ph_args_get_flag(const ph_parsed_args_t *args, const char *name);
 bool ph_args_has_flag(const ph_parsed_args_t *args, const char *name);
 bool ph_args_is_enabled(const ph_parsed_args_t *args, const char *name);
 bool ph_args_is_disabled(const ph_parsed_args_t *args, const char *name);
+bool ph_args_toggle_resolve(const ph_parsed_args_t *args,
+                            const char *name, bool fallback);
 
 /* ---- diagnostic subcodes (usage error category) ---- */
 
@@ -228,5 +230,6 @@ bool ph_args_is_disabled(const ph_parsed_args_t *args, const char *name);
 #define PH_UX005_TYPE_MISMATCH     5
 #define PH_UX006_MALFORMED_KVP     6
 #define PH_UX007_ENUM_VIOLATION    7
+#define PH_UX008_TOGGLE_SYNTAX     8
 
 #endif /* PHOSPHOR_ARGS_H */

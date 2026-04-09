@@ -43,3 +43,10 @@ bool ph_args_is_disabled(const ph_parsed_args_t *args, const char *name) {
     }
     return false;
 }
+
+bool ph_args_toggle_resolve(const ph_parsed_args_t *args,
+                            const char *name, bool fallback) {
+    if (ph_args_is_enabled(args, name))  return true;
+    if (ph_args_is_disabled(args, name)) return false;
+    return fallback;
+}

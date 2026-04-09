@@ -2,25 +2,10 @@
 #include "phosphor/args.h"
 #include "phosphor/path.h"
 
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <string.h>
-
-/* ---- internal helpers ---- */
-
-static bool is_integer_string(const char *s) {
-  if (!s || !*s)
-    return false;
-  const char *p = s;
-  if (*p == '-' || *p == '+')
-    p++;
-  if (!*p)
-    return false;
-  while (*p) {
-    if (*p < '0' || *p > '9')
-      return false;
-    p++;
-  }
-  return true;
-}
 
 static bool is_valid_url(const char *s) {
   if (!s)
@@ -97,6 +82,16 @@ ph_result_t ph_validate(const ph_cli_config_t *config,
       return PH_ERR;
     }
 
+    /* UX008: toggle spec given bare --flag or --flag=value */
+    if (spec->form == PH_FORM_TOGGLE &&
+        (flag->kind == PH_FLAG_BOOL || flag->kind == PH_FLAG_VALUED)) {
+      *err = ph_error_createf(
+          PH_ERR_USAGE, PH_UX008_TOGGLE_SYNTAX,
+          "flag --%s is a toggle: use --enable-%s or --disable-%s",
+          flag->name, flag->name, flag->name);
+      return PH_ERR;
+    }
+
     /* type checks only apply to valued flags */
     if (flag->kind == PH_FLAG_VALUED && flag->value) {
 
@@ -109,15 +104,24 @@ ph_result_t ph_validate(const ph_cli_config_t *config,
 
       switch (spec->type) {
 
-      case PH_TYPE_INT:
-        /* UX005: value must be a valid integer string */
-        if (!is_integer_string(flag->value)) {
+      case PH_TYPE_INT: {
+        char *end;
+        errno = 0;
+        long long val = strtoll(flag->value, &end, 10);
+        if (*end != '\0' || errno == ERANGE) {
           *err = ph_error_createf(PH_ERR_USAGE, PH_UX005_TYPE_MISMATCH,
                                   "flag --%s expects an integer, got: %s",
                                   flag->name, flag->value);
           return PH_ERR;
         }
+        if (val < INT_MIN || val > INT_MAX) {
+          *err = ph_error_createf(PH_ERR_USAGE, PH_UX005_TYPE_MISMATCH,
+                                  "flag --%s: value %lld out of range (%d..%d)",
+                                  flag->name, val, INT_MIN, INT_MAX);
+          return PH_ERR;
+        }
         break;
+      }
 
       case PH_TYPE_URL:
         /* UX005: value must have http:// or https:// prefix */

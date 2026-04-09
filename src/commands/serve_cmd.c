@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <limits.h>
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -24,7 +25,13 @@
 
 static int flag_int(const ph_parsed_args_t *args, const char *name) {
     const char *v = ph_args_get_flag(args, name);
-    return v ? atoi(v) : 0;
+    if (!v) return 0;
+    char *end;
+    errno = 0;
+    long val = strtol(v, &end, 10);
+    if (*end != '\0' || errno == ERANGE || val < INT_MIN || val > INT_MAX)
+        return 0;
+    return (int)val;
 }
 
 /* validate IPv4 or IPv6 address string */
@@ -389,14 +396,14 @@ int ph_cmd_serve(const ph_cli_config_t *config,
     }
 
     /* neonsignal logging flags -- tier 1 (flag) > tier 2 (manifest) */
-    cfg.ns.enable_debug = ph_args_is_enabled(args, "debug")
-                        || (ms && ms->ns_enable_debug);
-    cfg.ns.enable_log = ph_args_is_enabled(args, "log")
-                      || (ms && ms->ns_enable_log);
-    cfg.ns.enable_log_color = ph_args_is_enabled(args, "log-color")
-                            || (ms && ms->ns_enable_log_color);
-    cfg.ns.enable_file_log = ph_args_is_enabled(args, "file-log")
-                           || (ms && ms->ns_enable_file_log);
+    cfg.ns.enable_debug = ph_args_toggle_resolve(args, "debug",
+                              ms && ms->ns_enable_debug);
+    cfg.ns.enable_log = ph_args_toggle_resolve(args, "log",
+                            ms && ms->ns_enable_log);
+    cfg.ns.enable_log_color = ph_args_toggle_resolve(args, "log-color",
+                                  ms && ms->ns_enable_log_color);
+    cfg.ns.enable_file_log = ph_args_toggle_resolve(args, "file-log",
+                                 ms && ms->ns_enable_file_log);
     /* audit fix: log_directory is mkdir'd directly by phosphor BEFORE any
      * child chdir, so a relative value resolved against the caller cwd
      * creates the log dir in the wrong place. */
@@ -407,8 +414,8 @@ int ph_cmd_serve(const ph_cli_config_t *config,
         cfg.ns.log_directory = derived.ns_log_directory
                              ? derived.ns_log_directory : raw;
     }
-    cfg.ns.disable_proxies_check = ph_args_is_disabled(args, "proxies-check")
-                                 || (ms && ms->ns_disable_proxies_check);
+    cfg.ns.disable_proxies_check = !ph_args_toggle_resolve(args, "proxies-check",
+                                       !(ms && ms->ns_disable_proxies_check));
 
     /* watch config -- tier 1 (flag) > tier 2 (manifest [serve]) */
     cfg.ns.watch = watch_flag || (ms && ms->ns_watch);
