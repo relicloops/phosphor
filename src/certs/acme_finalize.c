@@ -62,7 +62,12 @@ ph_result_t ph_acme_finalize(const char *key_path,
             return PH_ERR;
         }
     }
-    ph_fs_chmod(privkey_path, 0600);
+    if (ph_fs_chmod(privkey_path, 0600) != PH_OK) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_FS, 0,
+                "cannot set permissions on ACME key: %s", privkey_path);
+        return PH_ERR;
+    }
 
     if (ph_signal_interrupted()) return PH_ERR;
 
@@ -289,7 +294,12 @@ ph_result_t ph_acme_finalize(const char *key_path,
     ph_free(cert_body);
 
     /* set permissions: cert 644, key already 600 */
-    ph_fs_chmod(cert_path, 0644);
+    if (ph_fs_chmod(cert_path, 0644) != PH_OK) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_FS, 0,
+                "cannot set permissions on certificate: %s", cert_path);
+        return PH_ERR;
+    }
 
     ph_log_info("certs: certificate saved to %s", cert_path);
     ph_log_info("certs: private key saved to %s", privkey_path);

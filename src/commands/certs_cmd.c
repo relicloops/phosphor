@@ -396,7 +396,23 @@ static int run_letsencrypt(const ph_certs_config_t *config,
 
             if (privkey_path && cert_path) {
                 /* ensure output directory */
-                ph_fs_mkdir_p(domain_dir, 0755);
+                if (ph_fs_mkdir_p(domain_dir, 0755) != PH_OK) {
+                    ph_log_error("certs: cannot create output directory: %s",
+                                 domain_dir);
+                    ph_free(privkey_path);
+                    ph_free(cert_path);
+                    for (size_t j = 0; j < auth_count; j++)
+                        ph_free(auth_urls[j]);
+                    ph_free(auth_urls);
+                    ph_free(order_url);
+                    ph_free(finalize_url);
+                    ph_free(account_url);
+                    ph_cert_domain_sans_free(eff_sans, eff_count);
+                    ph_free(webroot_abs);
+                    ph_free(domain_dir);
+                    ph_free(heap_key);
+                    return PH_ERR_FS;
+                }
 
                 if (ph_acme_finalize(key_path, account_url, finalize_url,
                                       order_url, directory_url,

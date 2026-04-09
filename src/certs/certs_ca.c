@@ -147,7 +147,12 @@ ph_result_t ph_certs_gen_ca(const ph_certs_config_t *config,
     if (ph_signal_interrupted()) goto fail_signal;
 
     /* set key permissions: 600 */
-    ph_fs_chmod(key_path, 0600);
+    if (ph_fs_chmod(key_path, 0600) != PH_OK) {
+        if (err)
+            *err = ph_error_createf(PH_ERR_FS, 0,
+                "cannot set permissions on CA key: %s", key_path);
+        goto fail;
+    }
 
     /* step 2: openssl req -x509 -new -nodes ... */
     {
