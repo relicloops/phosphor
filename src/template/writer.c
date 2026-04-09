@@ -262,6 +262,9 @@ typedef struct {
                                              filter callback can record a
                                              deny hit on the context */
     const char              *newline;
+    const char              *dest_dir;    /* audit fix (finding 4):
+                                             per-child containment anchor,
+                                             may be NULL */
     ph_plan_stats_t         *stats;
 } rendertree_ctx_t;
 
@@ -414,6 +417,22 @@ static ph_result_t rendertree_recurse(const char *src, const char *dst,
                         out_len = nl_len;
                     }
                 }
+            }
+
+            /* audit fix (finding 4): per-child containment re-check */
+            if (rctx->dest_dir &&
+                !ph_path_is_under(dst_child, rctx->dest_dir)) {
+                if (err)
+                    *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                        "rendertree: child escapes dest_dir: %s",
+                        dst_child);
+                if (out_owned) ph_free(out);
+                ph_free(data);
+                ph_free(src_child);
+                ph_free(dst_child);
+                ph_free(rel_child);
+                closedir(d);
+                return PH_ERR;
             }
 
             if (ph_fs_write_file(dst_child, out, out_len) != PH_OK) {
@@ -621,7 +640,7 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                 if (ph_fs_copytree(op->from_abs, op->to_abs,
                                     filters ? exec_filter_cb : NULL,
                                     filters ? &filter_ctx : NULL,
-                                    err) != PH_OK)
+                                    plan->dest_dir, err) != PH_OK)
                     goto cleanup_err;
                 if (filter_ctx.deny_hit) {
                     if (err)
@@ -712,6 +731,7 @@ ph_result_t ph_plan_execute(const ph_plan_t *plan,
                     .filters    = filters,
                     .filter_ctx = filters ? &filter_ctx : NULL,
                     .newline    = op->newline,
+                    .dest_dir   = plan->dest_dir,
                     .stats      = stats,
                 };
                 if (rendertree_recurse(op->from_abs, op->to_abs,

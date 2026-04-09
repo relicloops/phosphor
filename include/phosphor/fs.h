@@ -47,9 +47,16 @@ typedef bool (*ph_fs_filter_fn)(const char *rel_path, bool is_dir,
  * ph_fs_copytree -- recursive directory copy with filter callback.
  * checks ph_signal_interrupted() between files.
  * respects PH_MAX_DIR_DEPTH from path.h.
+ *
+ * if contain_root is non-NULL, every destination child is canonically
+ * checked via ph_path_is_under() before writing. a violation aborts
+ * with PH_ERR_VALIDATE. pass NULL to skip the per-child containment
+ * check (e.g. when the caller has already validated the top-level
+ * destination).
  */
 ph_result_t ph_fs_copytree(const char *src, const char *dst,
                             ph_fs_filter_fn filter, void *filter_ctx,
+                            const char *contain_root,
                             ph_error_t **err);
 
 /* ---- recursive removal ---- */

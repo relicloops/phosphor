@@ -940,7 +940,8 @@ int ph_cmd_build(const ph_cli_config_t *config,
 
                 ph_error_t *err = NULL;
                 if (ph_fs_copytree(static_dir, build_dir,
-                                   metadata_skip_filter, NULL, &err) != PH_OK) {
+                                   metadata_skip_filter, NULL,
+                                   NULL, &err) != PH_OK) {
                     ph_log_error("build: failed to copy static assets: %s",
                                   err ? err->message : "unknown");
                     ph_error_destroy(err);
@@ -980,7 +981,8 @@ int ph_cmd_build(const ph_cli_config_t *config,
         err = NULL;
 
         if (ph_fs_copytree(build_dir, deploy_dir,
-                           metadata_skip_filter, NULL, &err) != PH_OK) {
+                           metadata_skip_filter, NULL,
+                           NULL, &err) != PH_OK) {
             ph_log_error("build: failed to deploy: %s",
                           err ? err->message : "unknown");
             ph_error_destroy(err);

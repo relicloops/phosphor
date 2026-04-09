@@ -12,6 +12,7 @@
 
 static ph_result_t copytree_recurse(const char *src, const char *dst,
                                      ph_fs_filter_fn filter, void *ctx,
+                                     const char *contain_root,
                                      const char *rel_base, int depth,
                                      ph_error_t **err) {
     if (depth > PH_MAX_DIR_DEPTH) {
@@ -93,9 +94,26 @@ static ph_result_t copytree_recurse(const char *src, const char *dst,
             continue;
         }
 
+        /* audit fix (finding 4): per-child containment re-check.
+         * a concurrent symlink swap can redirect a descendant write
+         * outside the approved root after the one-time top-level
+         * check passed. */
+        if (contain_root &&
+            !ph_path_is_under(dst_child, contain_root)) {
+            if (err)
+                *err = ph_error_createf(PH_ERR_VALIDATE, 0,
+                    "copytree: child escapes containment root: %s",
+                    dst_child);
+            ph_free(src_child);
+            ph_free(dst_child);
+            ph_free(rel_child);
+            closedir(d);
+            return PH_ERR;
+        }
+
         if (st.is_dir) {
             ph_result_t rc = copytree_recurse(src_child, dst_child,
-                                               filter, ctx,
+                                               filter, ctx, contain_root,
                                                rel_child, depth + 1, err);
             if (rc != PH_OK) {
                 ph_free(src_child);
@@ -147,6 +165,7 @@ static ph_result_t copytree_recurse(const char *src, const char *dst,
 
 ph_result_t ph_fs_copytree(const char *src, const char *dst,
                             ph_fs_filter_fn filter, void *filter_ctx,
+                            const char *contain_root,
                             ph_error_t **err) {
     if (!src || !dst) {
         if (err)
@@ -155,7 +174,8 @@ ph_result_t ph_fs_copytree(const char *src, const char *dst,
         return PH_ERR;
     }
 
-    return copytree_recurse(src, dst, filter, filter_ctx, "", 0, err);
+    return copytree_recurse(src, dst, filter, filter_ctx,
+                             contain_root, "", 0, err);
 }
 
 ph_result_t ph_fs_rmtree(const char *path, ph_error_t **err) {

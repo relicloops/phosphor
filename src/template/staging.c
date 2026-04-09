@@ -154,7 +154,7 @@ ph_result_t ph_staging_commit(ph_staging_t *staging, ph_error_t **err) {
                      "falling back to copytree");
 
         if (ph_fs_copytree(staging->path, staging->dest_path,
-                            NULL, NULL, err) != PH_OK)
+                            NULL, NULL, NULL, err) != PH_OK)
             return PH_ERR;
 
         /* remove staging dir */
