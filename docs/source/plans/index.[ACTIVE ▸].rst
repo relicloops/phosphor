@@ -48,7 +48,7 @@ overview documents and per-phase task breakdowns for the phosphor project.
    glow-command-embedded-template.[COMPLETED ✓]
    verbose-flag-implementation.[DRAFT ○]
    embedded-build-toolchain.[DRAFT ○]
-   soc-audit-json-consolidation.[DRAFT ○]
+   soc-audit-json-consolidation.[COMPLETED ✓]
 
 .. toctree::
    :maxdepth: 2

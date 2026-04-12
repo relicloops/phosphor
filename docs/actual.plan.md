@@ -1,64 +1,39 @@
-# Plan -- args-parser audit fix (2026-04-09T11-28-03Z)
+# Plan -- args-parser audit fix (2026-04-12T07-06-35Z)
 
 ## Context
 
-Codex audit `.claude/codex-audit-fix/2026-04-09T11-28-03Zargs_parser.bugs.audit.md`
-identified three bugs in the args-parser/serve pipeline that survived the
-`609f8c2` toggle-form fix. All three allow the CLI to silently accept input
-that does nothing or produces undefined behavior.
+Codex audit `.claude/codex-audit-fix/2026-04-12T07-06-35Zargs_parser.bugs.audit.md`
+found three findings. One was already fixed in a prior session. Two are live.
 
-## Finding inventory
+| # | Sev | Finding | Status |
+|---|-----|---------|--------|
+| 1 | P2 | Nonpositive int flags accepted, silently discarded by serve | Fixed |
+| 2 | P2 | `create --template` http:// URLs misclassified as local paths | Fixed |
+| 3 | P3 | PH_TYPE_BOOL valued flags never type-checked | Already fixed (prior session) |
 
-1. **[P1] Toggle CLI flags cannot override manifest booleans in opposite direction**
-2. **[P2] Toggle specs accept bare `--flag` / `--flag=value` on TOGGLE specs**
-3. **[P2] Integer flags use `atoi` with no range validation**
+## Fixes
 
-## Fixes (implementation order)
+### A. Classify http:// in ph_git_is_url so rejection path is reachable
 
-### A. [P2] Reject bare `--flag` / `--flag=value` on TOGGLE specs
+- `src/io/git_fetch.c` -- added `http://` prefix check to `ph_git_is_url()`
+- `ph_git_url_parse()` already rejects `http://` with clear diagnostic
 
-- `src/args-parser/validate.c` -- new UX008 check after line 98
-- `include/phosphor/args.h` -- add `PH_UX008_TOGGLE_SYNTAX 8`
+### B. Reject nonpositive integer flags in serve
 
-### B. [P2] Replace `atoi` with `strtoll` + INT range check
+- `src/commands/serve_cmd.c` -- added explicit `t1 <= 0 && ph_args_has_flag`
+  checks at all 5 integer merge sites (threads, port, redirect-instances,
+  redirect-port, redirect-target-port)
+- Returns `PH_ERR_USAGE` with cleanup on rejection
 
-- `src/args-parser/validate.c` -- replace `PH_TYPE_INT` case with `strtoll`
-  + `INT_MIN..INT_MAX` bounds, remove dead `is_integer_string()` helper
-- `src/commands/serve_cmd.c` -- replace `flag_int` with `strtol` defense-in-depth
+## Commits
 
-### C. [P1] Three-state toggle merge
-
-- `src/args-parser/args_helpers.c` -- new `ph_args_toggle_resolve()` helper
-- `include/phosphor/args.h` -- declare `ph_args_toggle_resolve`
-- `src/commands/serve_cmd.c` -- replace OR-merge with three-state resolve;
-  `proxies-check` uses double negation for inverted polarity
-
-## Commit
-
-Single commit:
-```
-fix(args): three-state toggle merge, reject bare toggle syntax, safe int parse
-```
-
-## Verification
-
-- `ninja -C build` -- zero new warnings
-- `./build/phosphor version` -- smoke test
-- `phosphor serve --debug` -- UX008 error
-- `phosphor serve --port=99999999999999` -- type mismatch error
-- `phosphor serve --port=2147483648` -- out of range error
+1. `fix(git): classify http:// URLs so the rejection path is reachable`
+2. `fix(serve): reject nonpositive integer flags instead of silent fallback`
 
 ## Critical files
 
 ### Modified
-- `src/args-parser/validate.c`
-- `src/args-parser/args_helpers.c`
-- `src/commands/serve_cmd.c`
-- `include/phosphor/args.h`
-- `docs/actual.plan.md` (this plan)
-- `docs/current.audit.fix.md` (audit mirror)
-- `.claude/codex-audit-fix/2026-04-09T11-28-03Zargs_parser.bugs.audit.md`
-
-### Renamed at end (audit-fix skill)
-- `.claude/codex-audit-fix/2026-04-09T11-28-03Zargs_parser.bugs.audit.md`
-  -> `...[COMPLETED].md`
+- `src/io/git_fetch.c` -- finding 2
+- `src/commands/serve_cmd.c` -- finding 1
+- `docs/actual.plan.md` -- this plan
+- `docs/current.audit.fix.md` -- audit mirror
