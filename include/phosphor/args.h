@@ -167,6 +167,10 @@ ph_result_t ph_parser_parse(const ph_cli_config_t *config,
 
 void ph_parsed_args_destroy(ph_parsed_args_t *args);
 
+ph_result_t ph_args_apply_defaults(const ph_cli_config_t *config,
+                                   ph_parsed_args_t *args,
+                                   ph_error_t **err);
+
 /* ---- config-driven lookups ---- */
 
 const char *ph_cmd_def_name(const ph_cli_config_t *config, int command_id);

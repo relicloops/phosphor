@@ -41,6 +41,17 @@ int main(int argc, char *argv[]) {
         return PH_ERR_USAGE;
     }
 
+    /* defaults: inject argspec defaults for absent valued flags */
+    if (ph_args_apply_defaults(&phosphor_cli_config, &args, &err) != PH_OK) {
+        if (err) {
+            ph_log_error("%s", err->message);
+            ph_error_destroy(err);
+        }
+        ph_parsed_args_destroy(&args);
+        ph_token_stream_destroy(&tokens);
+        return PH_ERR_INTERNAL;
+    }
+
     /* validator: semantic checks */
     if (ph_validate(&phosphor_cli_config, &args, &err) != PH_OK) {
         if (err) {

@@ -255,6 +255,46 @@ alloc_fail:
     return PH_ERR;
 }
 
+ph_result_t ph_args_apply_defaults(const ph_cli_config_t *config,
+                                   ph_parsed_args_t *args,
+                                   ph_error_t **err) {
+    if (!config || !args || !err) return PH_ERR;
+    *err = NULL;
+
+    size_t spec_count = 0;
+    const ph_argspec_t *specs =
+        ph_cmd_def_specs(config, args->command_id, &spec_count);
+    if (!specs) return PH_OK;
+
+    for (size_t i = 0; i < spec_count; i++) {
+        if (!specs[i].default_value)          continue;
+        if (specs[i].form != PH_FORM_VALUED)  continue;
+        if (ph_args_has_flag(args, specs[i].name)) continue;
+
+        ph_parsed_flag_t f = {
+            .kind       = PH_FLAG_VALUED,
+            .name       = dup_str(specs[i].name),
+            .value      = dup_str(specs[i].default_value),
+            .argv_index = -1,
+        };
+        if (!f.name || !f.value) {
+            ph_free(f.name);
+            ph_free(f.value);
+            *err = ph_error_create(PH_ERR_INTERNAL, 0,
+                                   "allocation failed applying defaults");
+            return PH_ERR;
+        }
+        if (flags_push(args, &f) != PH_OK) {
+            ph_free(f.name);
+            ph_free(f.value);
+            *err = ph_error_create(PH_ERR_INTERNAL, 0,
+                                   "allocation failed applying defaults");
+            return PH_ERR;
+        }
+    }
+    return PH_OK;
+}
+
 void ph_parsed_args_destroy(ph_parsed_args_t *args) {
     if (!args) return;
     for (size_t i = 0; i < args->flag_count; i++) {
