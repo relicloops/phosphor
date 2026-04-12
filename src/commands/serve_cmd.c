@@ -293,6 +293,14 @@ int ph_cmd_serve(const ph_cli_config_t *config,
 
     {
         int t1 = flag_int(args, "threads");
+        if (t1 <= 0 && ph_args_has_flag(args, "threads")) {
+            ph_log_error("serve: --threads requires a positive integer");
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_USAGE;
+        }
         cfg.ns.threads = t1 > 0 ? t1
                        : (ms ? ms->ns_threads : 0);
     }
@@ -304,6 +312,14 @@ int ph_cmd_serve(const ph_cli_config_t *config,
 
     {
         int t1 = flag_int(args, "port");
+        if (t1 <= 0 && ph_args_has_flag(args, "port")) {
+            ph_log_error("serve: --port requires a positive integer");
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_USAGE;
+        }
         cfg.ns.port = t1 > 0 ? t1
                     : (ms ? ms->ns_port : 0);
     }
@@ -437,6 +453,14 @@ int ph_cmd_serve(const ph_cli_config_t *config,
 
     {
         int t1 = flag_int(args, "redirect-instances");
+        if (t1 <= 0 && ph_args_has_flag(args, "redirect-instances")) {
+            ph_log_error("serve: --redirect-instances requires a positive integer");
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_USAGE;
+        }
         cfg.redir.instances = t1 > 0 ? t1
                             : (ms ? ms->redir_instances : 0);
     }
@@ -446,11 +470,27 @@ int ph_cmd_serve(const ph_cli_config_t *config,
     }
     {
         int t1 = flag_int(args, "redirect-port");
+        if (t1 <= 0 && ph_args_has_flag(args, "redirect-port")) {
+            ph_log_error("serve: --redirect-port requires a positive integer");
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_USAGE;
+        }
         cfg.redir.port = t1 > 0 ? t1
                        : (ms ? ms->redir_port : 0);
     }
     {
         int t1 = flag_int(args, "redirect-target-port");
+        if (t1 <= 0 && ph_args_has_flag(args, "redirect-target-port")) {
+            ph_log_error("serve: --redirect-target-port requires a positive integer");
+            serve_derived_paths_free(&derived);
+            if (has_certs) ph_certs_config_destroy(&certs_cfg);
+            if (has_manifest) ph_manifest_destroy(&manifest);
+            ph_free(project_root_abs);
+            return PH_ERR_USAGE;
+        }
         cfg.redir.target_port = t1 > 0 ? t1
                               : (ms ? ms->redir_target_port : 0);
     }
