@@ -177,8 +177,18 @@ ph_result_t ph_validate(const ph_cli_config_t *config,
         }
         break;
 
-      case PH_TYPE_STRING:
       case PH_TYPE_BOOL:
+        /* UX005: bool values must be exactly "true" or "false" */
+        if (strcmp(flag->value, "true") != 0 &&
+            strcmp(flag->value, "false") != 0) {
+          *err = ph_error_createf(PH_ERR_USAGE, PH_UX005_TYPE_MISMATCH,
+                                  "flag --%s expects true or false, got: %s",
+                                  flag->name, flag->value);
+          return PH_ERR;
+        }
+        break;
+
+      case PH_TYPE_STRING:
         break;
       }
     }
