@@ -26,7 +26,8 @@ extern char *mkdtemp(char *tmpl);
 
 bool ph_git_is_url(const char *s) {
     if (!s) return false;
-    return strncmp(s, "https://", 8) == 0;
+    return strncmp(s, "https://", 8) == 0
+        || strncmp(s, "http://", 7) == 0;
 }
 
 ph_result_t ph_git_url_parse(const char *input, ph_git_url_t *out,
